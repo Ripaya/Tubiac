@@ -9,7 +9,11 @@ plugins {
 
 android {
     namespace = "tube.maniac.feature.reader"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig { minSdk = 26 }
     buildFeatures { compose = true }
