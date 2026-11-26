@@ -224,8 +224,10 @@ class BackupManager @Inject constructor(
             }
         }
 
-        if (options.restoreSettings && filtered.settings != null) {
-            settingsRepository.replaceSettings(filtered.settings)
+        if (options.restoreSettings) {
+            filtered.settings?.let { restoredSettings ->
+                settingsRepository.replaceSettings(restoredSettings)
+            }
         }
     }
 
