@@ -30,7 +30,7 @@ fun GET(url: String, headers: Headers = Headers.headersOf()): Request =
     Request.Builder().url(url).headers(headers).get().build()
 
 fun Response.asJsoup(html: String? = null): Document =
-    Jsoup.parse(html ?: body?.string().orEmpty(), request.url.toString())
+    Jsoup.parse(html ?: body.string(), request.url.toString())
 
 abstract class HttpSource : CatalogueSource {
 

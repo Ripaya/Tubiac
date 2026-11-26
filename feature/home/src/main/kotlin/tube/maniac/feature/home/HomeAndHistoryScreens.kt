@@ -98,9 +98,8 @@ class HomeViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     historyDao: HistoryDao,
     chapterDao: ChapterDao,
-    seriesDao: SeriesDao,
-    private val aniListClient: AniListGraphQlClient,
     private val seriesDao: SeriesDao,
+    private val aniListClient: AniListGraphQlClient,
 ) : ViewModel() {
 
     private val popularFlow = MutableStateFlow<List<AniListMedia>>(emptyList())
