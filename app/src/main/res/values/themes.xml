@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Tubiac" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+
+    <style name="Theme.Tubiac.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#111216</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_monochrome</item>
+        <item name="postSplashScreenTheme">@style/Theme.Tubiac</item>
+    </style>
+</resources>

@@ -1,0 +1,45 @@
+name: Alpha Bug Report
+description: Report a bug encountered while testing a Tubiac alpha build
+labels: ["bug", "alpha"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Tubiac Alpha Version
+      placeholder: "v0.1.0-alpha1"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device & Android Version
+      placeholder: "Pixel 8, Android 15"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      options:
+        - Reader (Webtoon / Manga / Spread)
+        - Extensions & Repo Stores
+        - Local Source (SAF / CBZ)
+        - AniList Sync & Rate Limiter
+        - Downloads & WorkManager Queue
+        - Backup & Restore (.tachibk / JSON+ZIP)
+        - Shelf / Home / History / UI
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: "1. Open Home\n2. Tap Resume..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs Actual Behavior
+    validations:
+      required: true

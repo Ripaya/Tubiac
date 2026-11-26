@@ -1,0 +1,39 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Files for the ART/Dalvik VM
+*.class
+
+# Java / Kotlin / Gradle
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+.gradle/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local configuration & secrets
+local.properties
+*.jks
+*.keystore
+signing.properties
+
+# IntelliJ / Android Studio
+*.iml
+.idea/
+.navigation/
+.kotlin/
+
+# OS / Misc
+.DS_Store
+Thumbs.db
+*.swp
+*.log
+
+# Temporary workspace assets
+public/assets/aistudio/

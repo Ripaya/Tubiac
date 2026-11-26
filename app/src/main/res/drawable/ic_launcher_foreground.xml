@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal geometric monogram "T" formed from two manga panel frames with a diagonal page-turn cut -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Top horizontal manga panel bar with diagonal page-turn cut -->
+    <path
+        android:fillColor="#D9483B"
+        android:pathData="M28,30 L80,30 L74,43 L28,43 Z" />
+    <!-- Vertical manga panel stem -->
+    <path
+        android:fillColor="#FAF8F5"
+        android:pathData="M47,47 L61,47 L61,78 L47,78 Z" />
+    <!-- Accent corner fold -->
+    <path
+        android:fillColor="#E09F3E"
+        android:pathData="M74,43 L80,30 L80,43 Z" />
+</vector>

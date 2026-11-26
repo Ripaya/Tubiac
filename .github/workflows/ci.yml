@@ -1,0 +1,106 @@
+name: Alpha Check & Compile
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'alpha/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Verify Tests & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licenses & install SDK 37
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-37" "build-tools;36.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Run JVM & Android unit tests
+        run: gradle test testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Run Android Lint check
+        run: gradle :app:lintDebug --stacktrace --no-daemon
+
+      - name: Upload test & lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-reports
+          path: |
+            **/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
+  compile:
+    name: Compile Debug & Alpha APKs
+    needs: [check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licenses & install SDK 37
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-37" "build-tools;36.0.0"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Assemble Debug & Alpha APKs
+        run: gradle :app:assembleDebug :app:assembleAlpha --stacktrace --no-daemon
+
+      - name: Package APKs & SHA-256 Checksums
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/*.apk dist/
+          cp app/build/outputs/apk/alpha/*.apk dist/
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          ls -lh dist/
+          cat dist/SHA256SUMS.txt
+
+      - name: Upload Alpha & Debug APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tubiac-alpha-apks-${{ github.run_number }}
+          path: dist/
+          retention-days: 30
