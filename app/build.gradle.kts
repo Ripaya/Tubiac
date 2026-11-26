@@ -31,8 +31,8 @@ android {
         applicationId = "tube.maniac"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = System.getenv("TUBIAC_VERSION_NAME") ?: "0.1.0-alpha1"
+        versionCode = System.getenv("TUBIAC_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("TUBIAC_VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.0-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

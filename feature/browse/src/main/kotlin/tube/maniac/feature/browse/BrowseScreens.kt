@@ -175,9 +175,14 @@ class BrowseViewModel @Inject constructor(
         viewModelScope.launch {
             statusMessageFlow.value = "Refreshing repository indices..."
             val installedMap = sourceManager.installedExtensions.value.associate { it.info.pkgName to it.info }
-            val fetched = repoManager.refreshAllEnabledRepos(installedMap)
-            remoteExtensionsFlow.value = fetched
-            statusMessageFlow.value = "Loaded ${fetched.size} extensions from enabled repos"
+            val result = repoManager.refreshAllEnabledReposWithErrors(installedMap)
+            remoteExtensionsFlow.value = result.extensions
+            statusMessageFlow.value = if (result.errors.isEmpty()) {
+                "Loaded ${result.extensions.size} extensions from enabled repos"
+            } else {
+                val errorSummary = result.errors.entries.joinToString("; ") { (repo, err) -> "$repo: $err" }
+                "Loaded ${result.extensions.size} extensions • Errors: $errorSummary"
+            }
         }
     }
 

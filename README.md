@@ -2,7 +2,7 @@
 
 > Fast, minimal, open reading — your Shelf, your sources, your AniList.
 
-**Status:** Alpha (`v0.1.0-alpha1`)
+**Status:** Alpha (`0.1.0-alpha`, auto-versioned via CI)
 
 Tubiac is a minimal, fast, native Kotlin Android reader for manga, manhwa, webtoons, and comics built with **Jetpack Compose**, **Material 3 Expressive (1.5.0)**, **Tachiyomi/Mihon extension compatibility**, **SAF Local Source**, and **AniList GraphQL v2** with granular local-vs-synced privacy controls.
 
@@ -39,7 +39,7 @@ Tubiac is a minimal, fast, native Kotlin Android reader for manga, manhwa, webto
 
 Tubiac depends on GitHub Actions for continuous verification and Obtainium-ready alpha builds:
 
-1. **Alpha Check & Compile** (`.github/workflows/ci.yml`): Runs unit tests (`gradle test testDebugUnitTest`) and Android Lint (`gradle :app:lintDebug`) first; only after checks pass does it compile `tube.maniac.debug` and `tube.maniac.alpha` APKs with SHA-256 checksums.
+1. **Alpha Check & Compile** (`.github/workflows/ci.yml`): Runs unit tests (`gradle test testDebugUnitTest`) and Android Lint (`gradle :app:lintDebug`) first; compiles `tube.maniac.debug` and `tube.maniac.alpha` APKs with SHA-256 checksums; and on `main` pushes automatically computes the next alpha version/build number (`0.1.0-alpha` -> `0.1.1-alpha`, or `0.2.0` / `0.2.0-beta` -> `0.2.1-alpha`), signs with the repo keystore, and publishes an Obtainium-ready GitHub Pre-Release.
 2. **Release Alpha APK** (`.github/workflows/release-alpha.yml`): Triggered on `v*-alpha*` tags or manual dispatch to verify, build, and publish GitHub Pre-Releases for **Obtainium**.
 
 ### Build Locally

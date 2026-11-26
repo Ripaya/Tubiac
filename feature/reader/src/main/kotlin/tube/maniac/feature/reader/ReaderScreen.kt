@@ -152,6 +152,7 @@ class ReaderViewModel @Inject constructor(
             )
 
             val source = sourceManager.getSource(series.sourceId)
+            var loadError: String? = null
             val fetchedPages = runCatching {
                 if (source != null) {
                     val sChapter = SChapter.create().apply {
@@ -165,6 +166,8 @@ class ReaderViewModel @Inject constructor(
                 } else {
                     emptyList()
                 }
+            }.onFailure { err ->
+                loadError = err.message ?: "Failed to load chapter pages"
             }.getOrDefault(emptyList())
 
             _uiState.value = ReaderUiState(
@@ -177,6 +180,7 @@ class ReaderViewModel @Inject constructor(
                 incognitoMode = settings.incognitoMode,
                 currentPageIndex = initialPage.coerceIn(0, (fetchedPages.size - 1).coerceAtLeast(0)),
                 isLoading = false,
+                errorMessage = loadError,
             )
 
             triggerDownloadAhead(series, chapters, chapter, settings.downloadAheadCount)

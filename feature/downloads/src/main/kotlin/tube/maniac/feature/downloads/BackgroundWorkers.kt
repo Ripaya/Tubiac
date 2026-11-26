@@ -37,6 +37,7 @@ import tube.maniac.core.model.DownloadState
 import tube.maniac.core.model.DownloadStorageFormat
 import tube.maniac.core.model.PublicationStatus
 import tube.maniac.core.network.CloudflareChallengeException
+import tube.maniac.core.network.IpBlockedException
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -128,10 +129,10 @@ class DownloadWorker @AssistedInject constructor(
                 chapterDao.setDownloaded(task.chapterId, true)
                 downloadDao.updateState(task.id, DownloadState.COMPLETED)
             }.onFailure { err ->
-                val message = if (err is CloudflareChallengeException) {
-                    "Cloudflare challenge — open in WebView"
-                } else {
-                    err.message ?: "Download error"
+                val message = when (err) {
+                    is CloudflareChallengeException -> "Cloudflare challenge — open in WebView"
+                    is IpBlockedException -> "Blocked by site firewall (HTTP ${err.statusCode}) — switch network/VPN or check WebView"
+                    else -> err.message ?: "Download error"
                 }
                 downloadDao.updateState(task.id, DownloadState.FAILED, message)
             }
@@ -223,7 +224,7 @@ class LibraryUpdateWorker @AssistedInject constructor(
                         sourceName = source.name,
                         seriesUrl = series.url,
                         reason = err.message ?: "Could not reach source",
-                        isCloudflare = err is CloudflareChallengeException,
+                        isCloudflare = err is CloudflareChallengeException || err is IpBlockedException,
                         occurredAt = System.currentTimeMillis(),
                     ),
                 )

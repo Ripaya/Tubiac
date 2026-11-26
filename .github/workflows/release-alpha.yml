@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Alpha release tag (e.g. v0.1.0-alpha1)'
+        description: 'Alpha release tag (leave as auto to compute next version from latest release)'
         required: true
-        default: 'v0.1.0-alpha1'
+        default: 'auto'
 
 permissions:
   contents: write
@@ -25,13 +25,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve release tag
-        id: tag
+      - name: Resolve release version & build number
+        id: ver
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            python3 .github/scripts/compute_alpha_version.py --explicit-tag "${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            python3 .github/scripts/compute_alpha_version.py --explicit-tag "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up JDK 17
@@ -72,14 +74,15 @@ jobs:
           TUBIAC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           TUBIAC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           TUBIAC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          TUBIAC_VERSION_NAME: ${{ steps.tag.outputs.name }}
+          TUBIAC_VERSION_NAME: ${{ steps.ver.outputs.version_name }}
+          TUBIAC_VERSION_CODE: ${{ steps.ver.outputs.version_code }}
         run: gradle :app:assembleAlpha --stacktrace --no-daemon
 
       - name: Prepare release artifacts
         run: |
           mkdir -p release-dist
           APK_FILE=$(ls app/build/outputs/apk/alpha/*.apk | head -n 1)
-          OUT_NAME="tubiac-${{ steps.tag.outputs.name }}.apk"
+          OUT_NAME="tubiac-${{ steps.ver.outputs.tag_name }}.apk"
           cp "$APK_FILE" "release-dist/$OUT_NAME"
           (cd release-dist && sha256sum "$OUT_NAME" > SHA256SUMS.txt)
           ls -lh release-dist/
@@ -87,10 +90,14 @@ jobs:
       - name: Publish GitHub Alpha Pre-Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          name: Tubiac ${{ steps.tag.outputs.name }}
+          tag_name: ${{ steps.ver.outputs.tag_name }}
+          name: Tubiac ${{ steps.ver.outputs.version_name }} (Build ${{ steps.ver.outputs.version_code }})
           prerelease: true
           generate_release_notes: true
+          body: |
+            Alpha release **${{ steps.ver.outputs.version_name }}** (Build `${{ steps.ver.outputs.version_code }}`).
+
+            <!-- tubiac-build: ${{ steps.ver.outputs.version_code }} -->
           files: |
             release-dist/*.apk
             release-dist/SHA256SUMS.txt

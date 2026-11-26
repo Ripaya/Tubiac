@@ -28,6 +28,15 @@ class CloudflareChallengeException(
     val statusCode: Int,
 ) : IOException("Cloudflare verification required ($statusCode) for $challengeUrl")
 
+/**
+ * Typed exception raised when a site or edge firewall (e.g. Cloudflare WAF)
+ * hard-blocks the client IP/ASN rather than serving a solvable challenge.
+ */
+class IpBlockedException(
+    val blockedUrl: String,
+    val statusCode: Int,
+) : IOException("Access blocked by site firewall (HTTP $statusCode) for $blockedUrl. Switch network/VPN or check in WebView.")
+
 @Singleton
 class NetworkRuntimeConfig @Inject constructor() {
     val userAgent = AtomicReference(AppSettings.DEFAULT_USER_AGENT)
@@ -88,6 +97,9 @@ class UserAgentInterceptor(
         if (original.header("User-Agent").isNullOrBlank()) {
             builder.header("User-Agent", config.userAgent.get())
         }
+        if (original.header("Accept-Language").isNullOrBlank()) {
+            builder.header("Accept-Language", "en-US,en;q=0.9")
+        }
         if (config.spoofXRequestedWith.get()) {
             builder.removeHeader("X-Requested-With")
         }
@@ -99,13 +111,42 @@ class CloudflareDetectorInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val response = chain.proceed(request)
-        if (response.code == 403 || response.code == 503) {
+        if (response.code == 403 || response.code == 451 || response.code == 503) {
             val server = response.header("Server").orEmpty().lowercase()
             val cfMitigated = response.header("cf-mitigated").orEmpty().lowercase()
-            if (cfMitigated == "challenge" || server.contains("cloudflare")) {
+            val bodySnippet = runCatching { response.peekBody(8192).string().lowercase() }.getOrDefault("")
+
+            val isHardBlock = bodySnippet.contains("sorry, you have been blocked") ||
+                bodySnippet.contains("you are unable to access") ||
+                bodySnippet.contains("error 1020") ||
+                (bodySnippet.contains("cf-error-details") && cfMitigated != "challenge")
+
+            if (isHardBlock) {
+                response.close()
+                throw IpBlockedException(
+                    blockedUrl = request.url.toString(),
+                    statusCode = response.code,
+                )
+            }
+
+            val isChallenge = cfMitigated == "challenge" ||
+                bodySnippet.contains("just a moment") ||
+                bodySnippet.contains("cf-chl-") ||
+                bodySnippet.contains("challenge-platform") ||
+                (server.contains("cloudflare") && response.code == 503)
+
+            if (isChallenge) {
                 response.close()
                 throw CloudflareChallengeException(
                     challengeUrl = request.url.toString(),
+                    statusCode = response.code,
+                )
+            }
+
+            if (server.contains("cloudflare") && response.code == 403) {
+                response.close()
+                throw IpBlockedException(
+                    blockedUrl = request.url.toString(),
                     statusCode = response.code,
                 )
             }

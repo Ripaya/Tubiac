@@ -44,7 +44,12 @@ class WebViewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val initialUrl = intent.getStringExtra(EXTRA_URL).orEmpty().ifBlank { "https://anilist.co" }
+        val rawUrl = intent.getStringExtra(EXTRA_URL).orEmpty().trim()
+        val initialUrl = if (rawUrl.startsWith("https://") || rawUrl.startsWith("http://")) {
+            rawUrl
+        } else {
+            "https://anilist.co"
+        }
 
         setContent {
             TubiacTheme {
@@ -91,12 +96,7 @@ class WebViewActivity : ComponentActivity() {
                                         CookieManager.getInstance().flush()
                                     }
                                 }
-                                val extraHeaders = if (networkConfig.spoofXRequestedWith.get()) {
-                                    mapOf("X-Requested-With" to "")
-                                } else {
-                                    emptyMap()
-                                }
-                                loadUrl(initialUrl, extraHeaders)
+                                loadUrl(initialUrl)
                             }
                         },
                     )

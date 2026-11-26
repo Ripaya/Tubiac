@@ -42,6 +42,11 @@ data class RepoSourceDto(
     val baseUrl: String = "",
 )
 
+data class RepoRefreshResult(
+    val extensions: List<ExtensionInfo>,
+    val errors: Map<String, String> = emptyMap(),
+)
+
 /**
  * Fetches and refreshes Tachiyomi/Mihon index.min.json third-party repository indices
  * and handles APK lifecycle operations via Android PackageInstaller Session APIs.
@@ -99,13 +104,23 @@ class ExtensionRepoManager @Inject constructor(
 
     suspend fun refreshAllEnabledRepos(
         installedByPkg: Map<String, ExtensionInfo>,
-    ): List<ExtensionInfo> {
+    ): List<ExtensionInfo> = refreshAllEnabledReposWithErrors(installedByPkg).extensions
+
+    suspend fun refreshAllEnabledReposWithErrors(
+        installedByPkg: Map<String, ExtensionInfo>,
+    ): RepoRefreshResult {
         val repos = repoDao.getAll().map { it.toDomain() }.filter { it.enabled }
         val results = mutableListOf<ExtensionInfo>()
+        val errors = linkedMapOf<String, String>()
         repos.forEach { repo ->
-            fetchRepoExtensions(repo, installedByPkg).onSuccess { results.addAll(it) }
+            fetchRepoExtensions(repo, installedByPkg)
+                .onSuccess { results.addAll(it) }
+                .onFailure { err -> errors[repo.name] = err.message ?: "Failed to refresh ${repo.name}" }
         }
-        return results.distinctBy { it.pkgName }
+        return RepoRefreshResult(
+            extensions = results.distinctBy { it.pkgName },
+            errors = errors,
+        )
     }
 
     /**
