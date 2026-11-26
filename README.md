@@ -44,7 +44,7 @@ Tubiac depends on GitHub Actions for continuous verification and Obtainium-ready
 
 ### Build Locally
 
-Requires **JDK 17**, **Android SDK (API 37)**, and **Gradle 8.13**:
+Requires **JDK 17**, **Android SDK (API 37)**, and **Gradle 9.4.1**:
 
 ```bash
 gradle test testDebugUnitTest :app:lintDebug

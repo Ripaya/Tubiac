@@ -1,11 +1,23 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt.android)
 }
+
+val signingProps = Properties().apply {
+    val propsFile = rootProject.file("signing.properties")
+    if (propsFile.exists()) {
+        propsFile.inputStream().use(::load)
+    }
+}
+
+fun signingValue(envName: String, propName: String): String? =
+    System.getenv(envName)?.takeIf { it.isNotBlank() } ?: signingProps.getProperty(propName)?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "tube.maniac"
@@ -26,12 +38,12 @@ android {
 
     signingConfigs {
         create("alphaRelease") {
-            val keystorePath = System.getenv("TUBIAC_KEYSTORE_PATH")
+            val keystorePath = signingValue("TUBIAC_KEYSTORE_PATH", "storeFile")
             if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
                 storeFile = file(keystorePath)
-                storePassword = System.getenv("TUBIAC_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("TUBIAC_KEY_ALIAS")
-                keyPassword = System.getenv("TUBIAC_KEY_PASSWORD")
+                storePassword = signingValue("TUBIAC_KEYSTORE_PASSWORD", "storePassword")
+                keyAlias = signingValue("TUBIAC_KEY_ALIAS", "keyAlias")
+                keyPassword = signingValue("TUBIAC_KEY_PASSWORD", "keyPassword")
             }
         }
     }
@@ -53,6 +65,10 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            val releaseSigning = signingConfigs.getByName("alphaRelease")
+            if (releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -70,10 +86,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     lint {
         abortOnError = false
         warningsAsErrors = false
@@ -84,6 +96,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 
