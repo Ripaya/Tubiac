@@ -37,3 +37,7 @@ Thumbs.db
 
 # Temporary workspace assets
 public/assets/aistudio/
+
+# Python
+__pycache__/
+*.pyc
