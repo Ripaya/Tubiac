@@ -82,7 +82,7 @@ jobs:
           ls -lh release-dist/
 
       - name: Publish GitHub Alpha Pre-Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: Tubiac ${{ steps.tag.outputs.name }}
