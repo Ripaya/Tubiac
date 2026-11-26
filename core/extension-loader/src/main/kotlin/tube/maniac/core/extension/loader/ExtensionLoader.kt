@@ -1,11 +1,13 @@
 package tube.maniac.core.extension.loader
 
+import android.app.Application
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dalvik.system.PathClassLoader
+import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
@@ -13,12 +15,15 @@ import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
 import okhttp3.OkHttpClient
 import tube.maniac.core.model.ExtensionInfo
 import tube.maniac.core.model.ExtensionInstallState
+import tube.maniac.core.network.NetworkRuntimeConfig
+import uy.kohesive.injekt.Injekt
 import javax.inject.Inject
 import javax.inject.Singleton
 
 data class LoadedExtension(
     val info: ExtensionInfo,
     val sources: List<Source>,
+    val loadError: String? = null,
 )
 
 /**
@@ -29,9 +34,16 @@ data class LoadedExtension(
 class ExtensionLoader @Inject constructor(
     @ApplicationContext private val context: Context,
     okHttpClient: OkHttpClient,
+    networkConfig: NetworkRuntimeConfig,
 ) {
     init {
         ExtensionNetworkBridge.sharedClient = okHttpClient
+        ExtensionNetworkBridge.userAgentProvider = { networkConfig.userAgent.get() }
+        (context.applicationContext as? Application)?.let { app ->
+            Injekt.register<Application>(app)
+        }
+        Injekt.register<Context>(context.applicationContext ?: context)
+        Injekt.register(NetworkHelper())
     }
 
     fun loadInstalledExtensions(): List<LoadedExtension> {
@@ -76,6 +88,7 @@ class ExtensionLoader @Inject constructor(
 
         val classLoader = PathClassLoader(appInfo.sourceDir, appInfo.nativeLibraryDir, context.classLoader)
         val loadedSources = mutableListOf<Source>()
+        val errors = mutableListOf<String>()
 
         classNamesRaw.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach { rawName ->
             val fqcn = if (rawName.startsWith(".")) "$pkgName$rawName" else rawName
@@ -85,6 +98,8 @@ class ExtensionLoader @Inject constructor(
                     is Source -> loadedSources.add(instance)
                     is SourceFactory -> loadedSources.addAll(instance.createSources())
                 }
+            }.onFailure { err ->
+                errors.add("$fqcn: ${err.javaClass.simpleName}: ${err.message ?: "unknown error"}")
             }
         }
 
@@ -99,7 +114,11 @@ class ExtensionLoader @Inject constructor(
             installState = ExtensionInstallState.INSTALLED,
             installedVersionCode = versionCode,
         )
-        return LoadedExtension(info = info, sources = loadedSources)
+        return LoadedExtension(
+            info = info,
+            sources = loadedSources,
+            loadError = errors.takeIf { it.isNotEmpty() }?.joinToString("; "),
+        )
     }
 
     private fun extractLanguageFromPkg(pkgName: String): String {

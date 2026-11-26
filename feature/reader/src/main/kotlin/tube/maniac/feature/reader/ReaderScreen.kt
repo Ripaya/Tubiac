@@ -11,6 +11,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,13 +27,18 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.List
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Contrast
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -279,7 +286,7 @@ class ReaderViewModel @Inject constructor(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ReaderScreen(
     seriesId: Long,
@@ -301,6 +308,7 @@ fun ReaderScreen(
     var showOverlay by remember { mutableStateOf(true) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showChapterDrawer by remember { mutableStateOf(false) }
+    var seekRequest by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val scope = rememberCoroutineScope()
 
     val canvasBg = when (state.preferences.background) {
@@ -334,14 +342,31 @@ fun ReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) { detectTapGestures { showOverlay = !showOverlay } },
+                    .pointerInput(Unit) { detectTapGestures { showOverlay = !showOverlay } }
+                    .padding(24.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = state.errorMessage ?: "No pages available for this chapter.",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = state.errorMessage ?: "No pages available for this chapter.",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.loadChapter(
+                                seriesId,
+                                state.chapter?.id ?: chapterId,
+                                initialPage,
+                                isLandscapeTablet,
+                            )
+                        },
+                        shape = CircleShape,
+                    ) { Text("Retry") }
+                }
             }
         } else if (pages.isNotEmpty()) {
             when (state.activeMode) {
@@ -352,6 +377,11 @@ fun ReaderScreen(
 
                     LaunchedEffect(listState.firstVisibleItemIndex) {
                         viewModel.onPageChanged(listState.firstVisibleItemIndex)
+                    }
+                    LaunchedEffect(seekRequest) {
+                        seekRequest?.let { (target, _) ->
+                            listState.scrollToItem(target.coerceIn(0, pages.lastIndex))
+                        }
                     }
 
                     LazyColumn(
@@ -412,6 +442,13 @@ fun ReaderScreen(
                     LaunchedEffect(pagerState.currentPage) {
                         val firstPage = displayUnits.getOrNull(pagerState.currentPage)?.firstOrNull()?.index ?: 0
                         viewModel.onPageChanged(firstPage)
+                    }
+                    LaunchedEffect(seekRequest, spreadMode) {
+                        seekRequest?.let { (target, _) ->
+                            val targetUnit = (target / if (spreadMode) 2 else 1)
+                                .coerceIn(0, (displayUnits.size - 1).coerceAtLeast(0))
+                            pagerState.scrollToPage(targetUnit)
+                        }
                     }
 
                     HorizontalPager(
@@ -553,13 +590,41 @@ fun ReaderScreen(
                     .navigationBarsPadding(),
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    val currentChapIdx = state.chapters.indexOfFirst { it.id == state.chapter?.id }
+                    val prevChapter = if (currentChapIdx >= 0) state.chapters.getOrNull(currentChapIdx + 1) else null
+                    val nextChapter = if (currentChapIdx > 0) state.chapters.getOrNull(currentChapIdx - 1) else null
                     var sliderPage by remember(state.currentPageIndex) { mutableIntStateOf(state.currentPageIndex) }
-                    Slider(
-                        value = sliderPage.toFloat(),
-                        onValueChange = { sliderPage = it.toInt() },
-                        onValueChangeFinished = { viewModel.onPageChanged(sliderPage) },
-                        valueRange = 0f..(pages.lastIndex.coerceAtLeast(1)).toFloat(),
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(
+                            enabled = prevChapter != null,
+                            onClick = {
+                                prevChapter?.let { viewModel.loadChapter(seriesId, it.id, 0, isLandscapeTablet) }
+                            },
+                        ) {
+                            Icon(Icons.Rounded.ChevronLeft, contentDescription = "Previous chapter", tint = Color.White)
+                        }
+                        Slider(
+                            value = sliderPage.toFloat(),
+                            onValueChange = { sliderPage = it.toInt() },
+                            onValueChangeFinished = {
+                                seekRequest = sliderPage to ((seekRequest?.second ?: 0) + 1)
+                                viewModel.onPageChanged(sliderPage)
+                            },
+                            valueRange = 0f..(pages.lastIndex.coerceAtLeast(1)).toFloat(),
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            enabled = nextChapter != null,
+                            onClick = {
+                                nextChapter?.let { viewModel.loadChapter(seriesId, it.id, 0, isLandscapeTablet) }
+                            },
+                        ) {
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = "Next chapter", tint = Color.White)
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -589,12 +654,14 @@ fun ReaderScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("Reader Layout & Color Filter", style = MaterialTheme.typography.titleLarge)
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ReaderMode.entries.take(4).forEach { mode ->
                         FilterChip(
                             selected = state.activeMode == mode,
@@ -610,7 +677,7 @@ fun ReaderScreen(
                 )
 
                 Text("Background", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ReaderBackground.entries.forEach { bg ->
                         FilterChip(
                             selected = state.preferences.background == bg,

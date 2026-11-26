@@ -1,5 +1,6 @@
 package tube.maniac.feature.detail
 
+import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -18,12 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bookmark
-import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Warning
@@ -45,6 +47,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -74,6 +77,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -82,18 +89,26 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tube.maniac.core.database.SettingsRepository
 import tube.maniac.core.database.dao.ChapterDao
 import tube.maniac.core.database.dao.DownloadDao
 import tube.maniac.core.database.dao.SeriesDao
+import tube.maniac.core.database.entity.ChapterEntity
 import tube.maniac.core.database.entity.DownloadEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.database.entity.toEntity
+import tube.maniac.core.designsystem.components.ErrorRecoveryCard
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.Chapter
 import tube.maniac.core.model.MetadataSource
+import tube.maniac.core.model.PublicationStatus
 import tube.maniac.core.model.ReadingStatus
 import tube.maniac.core.model.Series
 import tube.maniac.core.model.SmartReaderModeDetector
+import tube.maniac.core.network.CloudflareChallengeException
+import tube.maniac.core.network.IpBlockedException
+import tube.maniac.feature.downloads.DownloadWorker
 import javax.inject.Inject
 
 enum class ChapterFilter { ALL, UNREAD, DOWNLOADED, BOOKMARKED }
@@ -105,52 +120,70 @@ data class SeriesDetailUiState(
     val filter: ChapterFilter = ChapterFilter.ALL,
     val sortDescending: Boolean = true,
     val selectedChapterIds: Set<Long> = emptySet(),
+    val isRefreshing: Boolean = false,
+    val errorMessage: String? = null,
+    val blockedUrl: String? = null,
 )
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SeriesDetailViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val seriesDao: SeriesDao,
     private val chapterDao: ChapterDao,
     private val downloadDao: DownloadDao,
+    private val sourceManager: SourceManager,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val seriesIdFlow = MutableStateFlow<Long?>(null)
     private val filterFlow = MutableStateFlow(ChapterFilter.ALL)
     private val sortDescFlow = MutableStateFlow(true)
     private val selectedChaptersFlow = MutableStateFlow<Set<Long>>(emptySet())
+    private val refreshingFlow = MutableStateFlow(false)
+    private val errorFlow = MutableStateFlow<Pair<String?, String?>>(null to null)
 
     val uiState: StateFlow<SeriesDetailUiState> = seriesIdFlow.flatMapLatest { id ->
         if (id == null) {
             flowOf(SeriesDetailUiState())
         } else {
             combine(
-                seriesDao.observeById(id),
-                chapterDao.observeBySeries(id),
-                filterFlow,
-                sortDescFlow,
-                selectedChaptersFlow,
-            ) { entity, chapterEntities, filter, desc, selected ->
-                val allChapters = chapterEntities.map { it.toDomain() }
-                val gaps = SmartReaderModeDetector.detectMissingChapterGaps(allChapters)
-                val filtered = allChapters.filter { ch ->
-                    when (filter) {
-                        ChapterFilter.ALL -> true
-                        ChapterFilter.UNREAD -> !ch.read
-                        ChapterFilter.DOWNLOADED -> ch.downloaded
-                        ChapterFilter.BOOKMARKED -> ch.bookmark
+                combine(
+                    seriesDao.observeById(id),
+                    chapterDao.observeBySeries(id),
+                    filterFlow,
+                    sortDescFlow,
+                    selectedChaptersFlow,
+                ) { entity, chapterEntities, filter, desc, selected ->
+                    val allChapters = chapterEntities.map { it.toDomain() }
+                    val gaps = SmartReaderModeDetector.detectMissingChapterGaps(allChapters)
+                    val filtered = allChapters.filter { ch ->
+                        when (filter) {
+                            ChapterFilter.ALL -> true
+                            ChapterFilter.UNREAD -> !ch.read
+                            ChapterFilter.DOWNLOADED -> ch.downloaded
+                            ChapterFilter.BOOKMARKED -> ch.bookmark
+                        }
+                    }.let { list ->
+                        if (desc) list.sortedByDescending { it.chapterNumber }
+                        else list.sortedBy { it.chapterNumber }
                     }
-                }.let { list ->
-                    if (desc) list.sortedByDescending { it.chapterNumber }
-                    else list.sortedBy { it.chapterNumber }
-                }
-                SeriesDetailUiState(
-                    series = entity?.toDomain(),
-                    chapters = filtered,
-                    missingGaps = gaps,
-                    filter = filter,
-                    sortDescending = desc,
-                    selectedChapterIds = selected,
+                    SeriesDetailUiState(
+                        series = entity?.toDomain(),
+                        chapters = filtered,
+                        missingGaps = gaps,
+                        filter = filter,
+                        sortDescending = desc,
+                        selectedChapterIds = selected,
+                    )
+                },
+                refreshingFlow,
+                errorFlow,
+            ) { base, refreshing, err ->
+                base.copy(
+                    isRefreshing = refreshing,
+                    errorMessage = err.first,
+                    blockedUrl = err.second,
                 )
             }
         }
@@ -158,6 +191,92 @@ class SeriesDetailViewModel @Inject constructor(
 
     fun load(seriesId: Long) {
         seriesIdFlow.value = seriesId
+        viewModelScope.launch(Dispatchers.IO) {
+            val series = seriesDao.getById(seriesId) ?: return@launch
+            val existing = chapterDao.getBySeries(seriesId)
+            if (existing.isEmpty() && series.sourceId >= 0L) {
+                refreshFromSource(seriesId)
+            }
+        }
+    }
+
+    fun refreshFromSource(targetSeriesId: Long? = seriesIdFlow.value) {
+        val seriesId = targetSeriesId ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val entity = seriesDao.getById(seriesId) ?: return@launch
+            if (entity.sourceId < 0L) return@launch
+            val source = sourceManager.getSource(entity.sourceId) ?: return@launch
+            refreshingFlow.value = true
+            errorFlow.value = null to null
+            runCatching {
+                val sManga = SManga.create().apply {
+                    url = entity.url
+                    title = entity.title
+                }
+                val details = runCatching { source.getMangaDetails(sManga) }.getOrNull()
+                if (details != null) {
+                    seriesDao.update(
+                        entity.copy(
+                            author = details.author ?: entity.author,
+                            artist = details.artist ?: entity.artist,
+                            description = details.description ?: entity.description,
+                            coverUrl = details.thumbnail_url ?: entity.coverUrl,
+                            genres = details.getGenres() ?: entity.genres,
+                            publicationStatus = when (details.status) {
+                                SManga.ONGOING -> PublicationStatus.ONGOING
+                                SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> PublicationStatus.COMPLETED
+                                SManga.ON_HIATUS -> PublicationStatus.HIATUS
+                                SManga.CANCELLED -> PublicationStatus.CANCELLED
+                                else -> entity.publicationStatus
+                            },
+                            lastUpdated = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+                val remoteChapters = source.getChapterList(sManga)
+                val existingUrls = chapterDao.getBySeries(seriesId).map { it.url }.toSet()
+                val newEntities = remoteChapters
+                    .filterNot { it.url in existingUrls }
+                    .mapIndexed { idx, ch ->
+                        ChapterEntity(
+                            seriesId = seriesId,
+                            url = ch.url,
+                            name = ch.name,
+                            chapterNumber = ch.chapter_number,
+                            scanlator = ch.scanlator,
+                            dateUpload = ch.date_upload,
+                            dateFetch = System.currentTimeMillis(),
+                            sourceOrder = idx,
+                        )
+                    }
+                if (newEntities.isNotEmpty()) {
+                    chapterDao.upsertAll(newEntities)
+                }
+            }.onFailure { err ->
+                val url = when (err) {
+                    is CloudflareChallengeException -> err.challengeUrl
+                    is IpBlockedException -> err.blockedUrl
+                    else -> (source as? HttpSource)?.let {
+                        runCatching {
+                            it.getMangaUrl(SManga.create().apply { url = entity.url; title = entity.title })
+                        }.getOrNull()
+                    }
+                }
+                errorFlow.value = (err.message ?: "Failed to refresh chapters") to url
+            }
+            refreshingFlow.value = false
+        }
+    }
+
+    fun resolveWebViewUrl(series: Series): String {
+        val source = sourceManager.getSource(series.sourceId) as? HttpSource
+        if (source != null) {
+            return source.getMangaUrl(SManga.create().apply { url = series.url; title = series.title })
+        }
+        if (series.url.startsWith("anilist://") && series.anilistId != null) {
+            return "https://anilist.co/manga/${series.anilistId}"
+        }
+        return series.url
     }
 
     fun setFilter(filter: ChapterFilter) {
@@ -254,6 +373,29 @@ class SeriesDetailViewModel @Inject constructor(
                     sourceId = series.sourceId,
                 ),
             )
+            val settings = settingsRepository.currentSettings()
+            DownloadWorker.enqueue(context, settings.wifiOnlyDownloads)
+        }
+    }
+
+    fun downloadAllUnread() {
+        val series = uiState.value.series ?: return
+        val unread = uiState.value.chapters.filter { !it.read && !it.downloaded }
+        if (unread.isEmpty()) return
+        viewModelScope.launch {
+            unread.forEach { chapter ->
+                downloadDao.upsert(
+                    DownloadEntity(
+                        seriesId = series.id,
+                        chapterId = chapter.id,
+                        seriesTitle = series.displayTitle,
+                        chapterName = chapter.name,
+                        sourceId = series.sourceId,
+                    ),
+                )
+            }
+            val settings = settingsRepository.currentSettings()
+            DownloadWorker.enqueue(context, settings.wifiOnlyDownloads)
         }
     }
 }
@@ -309,10 +451,15 @@ fun SeriesDetailScreen(
                             Icon(Icons.Rounded.Bookmark, contentDescription = "Bookmark")
                         }
                     } else if (series != null) {
+                        if (series.sourceId >= 0L) {
+                            IconButton(onClick = { viewModel.refreshFromSource(series.id) }) {
+                                Icon(Icons.Rounded.Refresh, contentDescription = "Refresh chapters")
+                            }
+                        }
                         IconButton(onClick = { showEditMetaDialog = true }) {
                             Icon(Icons.Rounded.Edit, contentDescription = "Edit custom metadata")
                         }
-                        IconButton(onClick = { onOpenWebView(series.url) }) {
+                        IconButton(onClick = { onOpenWebView(viewModel.resolveWebViewUrl(series)) }) {
                             Icon(Icons.Rounded.Public, contentDescription = "Open in WebView")
                         }
                         IconButton(onClick = { onOpenMigrate(series.id) }) {
@@ -500,6 +647,26 @@ fun SeriesDetailScreen(
                 }
             }
 
+            if (state.isRefreshing) {
+                item {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+
+            state.errorMessage?.let { err ->
+                item {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        ErrorRecoveryCard(
+                            title = "Source error",
+                            reason = err,
+                            onRetry = { viewModel.refreshFromSource(series.id) },
+                            onOpenWebView = { onOpenWebView(state.blockedUrl ?: viewModel.resolveWebViewUrl(series)) },
+                            onMigrateSource = { onOpenMigrate(series.id) },
+                        )
+                    }
+                }
+            }
+
             // Chapter Filter bar
             item {
                 Row(
@@ -513,17 +680,23 @@ fun SeriesDetailScreen(
                         text = "${state.chapters.size} Chapters",
                         style = MaterialTheme.typography.titleMedium.tabular(),
                     )
-                    TextButton(onClick = viewModel::toggleSort) {
-                        Text(if (state.sortDescending) "Newest first" else "Oldest first")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (series.sourceId > 0L && state.chapters.any { !it.read && !it.downloaded }) {
+                            TextButton(onClick = viewModel::downloadAllUnread) {
+                                Text("Download unread")
+                            }
+                        }
+                        TextButton(onClick = viewModel::toggleSort) {
+                            Text(if (state.sortDescending) "Newest first" else "Oldest first")
+                        }
                     }
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    ChapterFilter.entries.forEach { filter ->
+                    items(ChapterFilter.entries) { filter ->
                         FilterChip(
                             selected = state.filter == filter,
                             onClick = { viewModel.setFilter(filter) },

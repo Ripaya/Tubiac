@@ -53,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -406,7 +407,7 @@ fun SettingsScreen(
             // 3. Backup, Restore & Database Maintenance
             item {
                 SettingsSectionCard(title = "Backup, Restore & Database", icon = Icons.Rounded.Backup) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilledTonalButton(
                             onClick = { exportTachibkLauncher.launch("tubiac-backup.tachibk") },
                             shape = CircleShape,
@@ -596,8 +597,22 @@ fun SettingsScreen(
 
             // 7. About & Disclaimer
             item {
+                val context = LocalContext.current
+                val versionLabel = remember(context) {
+                    runCatching {
+                        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+                        val vName = info.versionName ?: "0.1.0-alpha"
+                        val vCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                            info.longVersionCode
+                        } else {
+                            @Suppress("DEPRECATION")
+                            info.versionCode.toLong()
+                        }
+                        "Tubiac $vName (Build $vCode • ${context.packageName})"
+                    }.getOrDefault("Tubiac (${context.packageName})")
+                }
                 SettingsSectionCard(title = "About Tubiac", icon = Icons.Rounded.Info) {
-                    Text("Tubiac v0.1.0-alpha1 (tube.maniac)", style = MaterialTheme.typography.titleSmall.tabular())
+                    Text(versionLabel, style = MaterialTheme.typography.titleSmall.tabular())
                     Text(
                         text = "Tubiac is strictly an open-source reader application and AniList tracking client licensed under GNU GPLv3. It does not host, distribute, or bundle any copyrighted media content or third-party extension code.",
                         style = MaterialTheme.typography.bodyMedium,

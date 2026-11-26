@@ -55,6 +55,7 @@ import tube.maniac.core.extension.loader.LocalSource
 import tube.maniac.core.network.NetworkRuntimeConfig
 import tube.maniac.feature.browse.BrowseScreen
 import tube.maniac.feature.browse.GlobalSearchScreen
+import tube.maniac.feature.browse.SourceBrowseScreen
 import tube.maniac.feature.browse.SourceMigrationScreen
 import tube.maniac.feature.detail.SeriesDetailScreen
 import tube.maniac.feature.downloads.DownloadsScreen
@@ -73,6 +74,7 @@ import tube.maniac.navigation.ReaderRoute
 import tube.maniac.navigation.SeriesDetailRoute
 import tube.maniac.navigation.SettingsRoute
 import tube.maniac.navigation.ShelfRoute
+import tube.maniac.navigation.SourceBrowseRoute
 import tube.maniac.navigation.SourceMigrationRoute
 import tube.maniac.navigation.UpdateErrorsRoute
 import tube.maniac.ui.OnboardingScreen
@@ -305,8 +307,19 @@ private fun TubiacMainShell(
             composable<BrowseRoute> {
                 BrowseScreen(
                     onOpenGlobalSearch = { navController.navigate(GlobalSearchRoute) },
+                    onOpenSource = { sourceId -> navController.navigate(SourceBrowseRoute(sourceId)) },
                     onOpenWebView = onOpenWebView,
                     onOpenMigration = { seriesId -> navController.navigate(SourceMigrationRoute(seriesId)) },
+                )
+            }
+
+            composable<SourceBrowseRoute> { entry ->
+                val args = entry.toRoute<SourceBrowseRoute>()
+                SourceBrowseScreen(
+                    sourceId = args.sourceId,
+                    onBack = { navController.popBackStack() },
+                    onOpenSeriesDetail = { id -> navController.navigate(SeriesDetailRoute(id)) },
+                    onOpenWebView = onOpenWebView,
                 )
             }
 

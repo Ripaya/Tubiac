@@ -1,5 +1,7 @@
 package tube.maniac.feature.shelf
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -295,7 +297,7 @@ class ShelfViewModel @Inject constructor(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ShelfScreen(
     onOpenSeriesDetail: (Long) -> Unit,
@@ -502,10 +504,16 @@ fun ShelfScreen(
                         ) {
                             items(state.series, key = { it.id }) { series ->
                                 Card(
-                                    onClick = {
-                                        if (selectionActive) viewModel.toggleSelection(series.id)
-                                        else onOpenSeriesDetail(series.id)
-                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(MaterialTheme.shapes.medium)
+                                        .combinedClickable(
+                                            onClick = {
+                                                if (selectionActive) viewModel.toggleSelection(series.id)
+                                                else onOpenSeriesDetail(series.id)
+                                            },
+                                            onLongClick = { viewModel.toggleSelection(series.id) },
+                                        ),
                                     shape = MaterialTheme.shapes.medium,
                                     colors = CardDefaults.cardColors(
                                         containerColor = if (series.id in state.selectedSeriesIds) {

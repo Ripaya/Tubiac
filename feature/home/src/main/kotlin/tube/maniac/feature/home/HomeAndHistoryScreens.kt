@@ -56,17 +56,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil3.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import tube.maniac.core.anilist.AniListGraphQlClient
 import tube.maniac.core.database.SettingsRepository
 import tube.maniac.core.database.dao.ChapterDao
 import tube.maniac.core.database.dao.HistoryDao
 import tube.maniac.core.database.dao.SeriesDao
+import tube.maniac.core.database.entity.SeriesEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
 import tube.maniac.core.designsystem.components.SeriesCoverCard
@@ -97,6 +100,7 @@ class HomeViewModel @Inject constructor(
     chapterDao: ChapterDao,
     seriesDao: SeriesDao,
     private val aniListClient: AniListGraphQlClient,
+    private val seriesDao: SeriesDao,
 ) : ViewModel() {
 
     private val popularFlow = MutableStateFlow<List<AniListMedia>>(emptyList())
@@ -132,6 +136,29 @@ class HomeViewModel @Inject constructor(
     fun toggleIncognito() {
         viewModelScope.launch {
             settingsRepository.updateSettings { it.copy(incognitoMode = !it.incognitoMode) }
+        }
+    }
+
+    fun openPopularSeries(media: AniListMedia, onCreated: (Long) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = seriesDao.getByAniListId(media.id)
+            val id = existing?.id ?: seriesDao.upsert(
+                SeriesEntity(
+                    sourceId = -1L,
+                    url = "anilist://${media.id}",
+                    title = media.preferredTitle,
+                    description = media.description,
+                    coverUrl = media.coverLarge,
+                    bannerUrl = media.bannerImage,
+                    genres = media.genres,
+                    format = media.format,
+                    publicationStatus = media.status,
+                    inLibrary = false,
+                    anilistId = media.id,
+                    anilistScore = media.averageScore,
+                ),
+            )
+            withContext(Dispatchers.Main) { onCreated(id) }
         }
     }
 }
@@ -316,7 +343,7 @@ fun HomeScreen(
                                 title = media.preferredTitle,
                                 coverUrl = media.coverLarge,
                                 subtitle = media.averageScore?.let { "★ $it%" },
-                                onClick = onOpenGlobalSearch,
+                                onClick = { viewModel.openPopularSeries(media, onOpenSeriesDetail) },
                                 modifier = Modifier.width(132.dp),
                             )
                         }

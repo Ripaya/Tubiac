@@ -130,7 +130,11 @@ class ExtensionRepoManager @Inject constructor(
         runCatching {
             val base = requireNotNull(extension.repoBaseUrl) { "Missing repository base URL" }
             val apkName = requireNotNull(extension.apkName) { "Missing APK filename" }
-            val apkUrl = "$base/apk/$apkName"
+            val apkUrl = if (apkName.startsWith("http://") || apkName.startsWith("https://")) {
+                apkName
+            } else {
+                "$base/apk/$apkName"
+            }
 
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {

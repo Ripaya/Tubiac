@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
@@ -35,6 +36,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -60,17 +62,22 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import tube.maniac.core.anilist.AniListGraphQlClient
 import tube.maniac.core.database.SettingsRepository
-import tube.maniac.core.database.dao.ChapterDao
 import tube.maniac.core.database.dao.ExtensionRepoDao
 import tube.maniac.core.database.dao.SeriesDao
 import tube.maniac.core.database.entity.ExtensionRepoEntity
@@ -86,6 +93,7 @@ import tube.maniac.core.model.ExtensionInfo
 import tube.maniac.core.model.ExtensionInstallState
 import tube.maniac.core.model.ExtensionRepo
 import tube.maniac.core.model.MigrationCandidate
+import tube.maniac.core.model.PublicationStatus
 import javax.inject.Inject
 
 enum class BrowseSubTab(val label: String) {
@@ -104,6 +112,7 @@ data class BrowseUiState(
     val activeTab: BrowseSubTab = BrowseSubTab.SOURCES,
     val sources: List<Source> = emptyList(),
     val installedExtensions: List<ExtensionInfo> = emptyList(),
+    val loadErrors: Map<String, String> = emptyMap(),
     val remoteExtensions: List<ExtensionInfo> = emptyList(),
     val repos: List<ExtensionRepo> = emptyList(),
     val showNsfw: Boolean = false,
@@ -138,6 +147,9 @@ class BrowseViewModel @Inject constructor(
                 activeTab = tab,
                 sources = sources,
                 installedExtensions = installed.map { it.info },
+                loadErrors = installed.mapNotNull { ext ->
+                    ext.loadError?.let { ext.info.name to it }
+                }.toMap(),
                 remoteExtensions = remote,
                 repos = repos.map { it.toDomain() },
             )
@@ -169,6 +181,11 @@ class BrowseViewModel @Inject constructor(
 
     fun selectLang(lang: String) {
         langFilterFlow.value = lang
+    }
+
+    fun refreshAll() {
+        sourceManager.reloadExtensions()
+        refreshRepos()
     }
 
     fun refreshRepos() {
@@ -211,8 +228,9 @@ class BrowseViewModel @Inject constructor(
 
     fun installExtension(ext: ExtensionInfo) {
         viewModelScope.launch {
+            statusMessageFlow.value = "Downloading ${ext.name}..."
             repoManager.installExtensionApk(ext)
-                .onSuccess { statusMessageFlow.value = "Installing ${ext.name}..." }
+                .onSuccess { statusMessageFlow.value = "Confirm installation prompt for ${ext.name}..." }
                 .onFailure { statusMessageFlow.value = it.message ?: "Install failed" }
         }
     }
@@ -226,8 +244,9 @@ class BrowseViewModel @Inject constructor(
 @Composable
 fun BrowseScreen(
     onOpenGlobalSearch: () -> Unit,
+    onOpenSource: (Long) -> Unit,
     onOpenWebView: (String) -> Unit,
-    onOpenMigration: (Long) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onOpenMigration: (Long) -> Unit,
     viewModel: BrowseViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -241,8 +260,8 @@ fun BrowseScreen(
                     IconButton(onClick = onOpenGlobalSearch) {
                         Icon(Icons.Rounded.Search, contentDescription = "Global Search")
                     }
-                    IconButton(onClick = viewModel::refreshRepos) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh repositories")
+                    IconButton(onClick = viewModel::refreshAll) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "Reload extensions & repositories")
                     }
                 },
             )
@@ -281,7 +300,11 @@ fun BrowseScreen(
                 Text(
                     text = msg,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (msg.contains("Errors:") || msg.contains("failed", ignoreCase = true)) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
@@ -290,6 +313,7 @@ fun BrowseScreen(
                 BrowseSubTab.SOURCES -> SourcesList(
                     sources = state.sources,
                     onGlobalSearch = onOpenGlobalSearch,
+                    onOpenSource = onOpenSource,
                     onOpenWebView = onOpenWebView,
                 )
 
@@ -354,7 +378,7 @@ fun BrowseScreen(
                         viewModel.addRepo(name, url, trusted)
                         showAddRepoDialog = false
                     },
-                    enabled = url.startsWith("https://"),
+                    enabled = url.trim().startsWith("https://") || url.trim().startsWith("http://"),
                 ) { Text("Add Repo") }
             },
             dismissButton = {
@@ -368,6 +392,7 @@ fun BrowseScreen(
 private fun SourcesList(
     sources: List<Source>,
     onGlobalSearch: () -> Unit,
+    onOpenSource: (Long) -> Unit,
     onOpenWebView: (String) -> Unit,
 ) {
     LazyColumn(
@@ -387,6 +412,7 @@ private fun SourcesList(
         }
         items(sources, key = { it.id }) { source ->
             Card(
+                onClick = { onOpenSource(source.id) },
                 shape = MaterialTheme.shapes.medium,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             ) {
@@ -397,7 +423,10 @@ private fun SourcesList(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Icon(
                             imageVector = if (source.id == LocalSource.LOCAL_SOURCE_ID) {
                                 Icons.Rounded.Folder
@@ -414,17 +443,24 @@ private fun SourcesList(
                                 text = if (source.id == LocalSource.LOCAL_SOURCE_ID) {
                                     "SAF CBZ, CBR, ZIP, EPUB & folders"
                                 } else {
-                                    source.lang.uppercase()
+                                    source.lang.uppercase().ifBlank { "ALL" }
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                    if (source is HttpSource) {
-                        IconButton(onClick = { onOpenWebView(source.baseUrl) }) {
-                            Icon(Icons.Rounded.Public, contentDescription = "Open in WebView")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (source is HttpSource) {
+                            IconButton(onClick = { onOpenWebView(source.baseUrl) }) {
+                                Icon(Icons.Rounded.Public, contentDescription = "Open in WebView")
+                            }
                         }
+                        Icon(
+                            Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            contentDescription = "Browse source",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -440,6 +476,14 @@ private fun ExtensionsList(
     onInstall: (ExtensionInfo) -> Unit,
     onUninstall: (String) -> Unit,
 ) {
+    val dynamicLangs = remember(state.installedExtensions, state.remoteExtensions) {
+        val detected = (state.installedExtensions + state.remoteExtensions)
+            .map { it.lang.lowercase() }
+            .filter { it.isNotBlank() && it != "all" }
+            .distinct()
+        (listOf("all", "en", "tr", "ja", "ko", "zh") + detected).distinct()
+    }
+
     val list = when (state.extensionSubTab) {
         ExtensionFilterTab.INSTALLED -> state.installedExtensions
         ExtensionFilterTab.AVAILABLE -> state.remoteExtensions.filter {
@@ -465,12 +509,29 @@ private fun ExtensionsList(
                     label = { Text(tab.label) },
                 )
             }
-            items(listOf("all", "en", "ja", "ko", "zh")) { lang ->
+            items(dynamicLangs) { lang ->
                 FilterChip(
                     selected = state.langFilter == lang,
                     onClick = { onSelectLang(lang) },
                     label = { Text(lang.uppercase()) },
                 )
+            }
+        }
+
+        if (state.loadErrors.isNotEmpty()) {
+            Card(
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Extension Load Warnings", style = MaterialTheme.typography.titleSmall)
+                    state.loadErrors.forEach { (name, err) ->
+                        Text("$name: $err", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
 
@@ -589,13 +650,21 @@ private fun ReposList(
     }
 }
 
+data class SourceSearchResult(
+    val sourceId: Long,
+    val sourceName: String,
+    val manga: SManga,
+)
+
 @HiltViewModel
 class GlobalSearchViewModel @Inject constructor(
     private val aniListClient: AniListGraphQlClient,
+    private val sourceManager: SourceManager,
     private val seriesDao: SeriesDao,
 ) : ViewModel() {
     val query = MutableStateFlow("")
-    val results = MutableStateFlow<List<AniListMedia>>(emptyList())
+    val anilistResults = MutableStateFlow<List<AniListMedia>>(emptyList())
+    val sourceResults = MutableStateFlow<List<SourceSearchResult>>(emptyList())
     val loading = MutableStateFlow(false)
 
     fun updateQuery(value: String) {
@@ -607,7 +676,20 @@ class GlobalSearchViewModel @Inject constructor(
         if (q.isBlank()) return
         viewModelScope.launch {
             loading.value = true
-            aniListClient.searchManga(q).onSuccess { results.value = it }
+            coroutineScope {
+                val aniListDeferred = async(Dispatchers.IO) {
+                    aniListClient.searchManga(q).getOrDefault(emptyList())
+                }
+                val sourcesDeferred = sourceManager.getCatalogueSources().map { src ->
+                    async(Dispatchers.IO) {
+                        runCatching { src.getSearchManga(1, q, FilterList()).mangas }
+                            .getOrDefault(emptyList())
+                            .map { SourceSearchResult(src.id, src.name, it) }
+                    }
+                }
+                anilistResults.value = aniListDeferred.await()
+                sourceResults.value = sourcesDeferred.awaitAll().flatten()
+            }
             loading.value = false
         }
     }
@@ -631,7 +713,34 @@ class GlobalSearchViewModel @Inject constructor(
                     anilistScore = media.averageScore,
                 ),
             )
-            launch(Dispatchers.Main) { onCreated(id) }
+            withContext(Dispatchers.Main) { onCreated(id) }
+        }
+    }
+
+    fun openOrCreateSourceSeries(item: SourceSearchResult, onCreated: (Long) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = seriesDao.getBySourceAndUrl(item.sourceId, item.manga.url)
+            val id = existing?.id ?: seriesDao.upsert(
+                SeriesEntity(
+                    sourceId = item.sourceId,
+                    url = item.manga.url,
+                    title = item.manga.title,
+                    author = item.manga.author,
+                    artist = item.manga.artist,
+                    description = item.manga.description,
+                    coverUrl = item.manga.thumbnail_url,
+                    genres = item.manga.getGenres().orEmpty(),
+                    publicationStatus = when (item.manga.status) {
+                        SManga.ONGOING -> PublicationStatus.ONGOING
+                        SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> PublicationStatus.COMPLETED
+                        SManga.ON_HIATUS -> PublicationStatus.HIATUS
+                        SManga.CANCELLED -> PublicationStatus.CANCELLED
+                        else -> PublicationStatus.UNKNOWN
+                    },
+                    inLibrary = false,
+                ),
+            )
+            withContext(Dispatchers.Main) { onCreated(id) }
         }
     }
 }
@@ -644,7 +753,9 @@ fun GlobalSearchScreen(
     viewModel: GlobalSearchViewModel = hiltViewModel(),
 ) {
     val query by viewModel.query.collectAsStateWithLifecycle()
-    val results by viewModel.results.collectAsStateWithLifecycle()
+    val aniResults by viewModel.anilistResults.collectAsStateWithLifecycle()
+    val srcResults by viewModel.sourceResults.collectAsStateWithLifecycle()
+    val loading by viewModel.loading.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -673,7 +784,7 @@ fun GlobalSearchScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = viewModel::updateQuery,
-                    placeholder = { Text("Search manga, manhwa, webtoons...") },
+                    placeholder = { Text("Search installed sources & AniList...") },
                     singleLine = true,
                     shape = CircleShape,
                     modifier = Modifier.weight(1f),
@@ -682,19 +793,55 @@ fun GlobalSearchScreen(
                     Text("Search")
                 }
             }
+            if (loading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(results, key = { it.id }) { media ->
-                    Card(
-                        onClick = { viewModel.openOrCreateSeries(media, onOpenSeriesDetail) },
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Text(media.preferredTitle, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = "${media.format.name} • ${media.genres.take(3).joinToString(", ")}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                if (srcResults.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Installed Sources (${srcResults.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    items(srcResults, key = { "${it.sourceId}_${it.manga.url}" }) { item ->
+                        Card(
+                            onClick = { viewModel.openOrCreateSourceSeries(item, onOpenSeriesDetail) },
+                            shape = MaterialTheme.shapes.medium,
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                                Text(item.manga.title, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = item.sourceName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (aniResults.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "AniList (${aniResults.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    items(aniResults, key = { it.id }) { media ->
+                        Card(
+                            onClick = { viewModel.openOrCreateSeries(media, onOpenSeriesDetail) },
+                            shape = MaterialTheme.shapes.medium,
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                                Text(media.preferredTitle, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "${media.format.name} • ${media.genres.take(3).joinToString(", ")}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -706,7 +853,6 @@ fun GlobalSearchScreen(
 @HiltViewModel
 class SourceMigrationViewModel @Inject constructor(
     private val seriesDao: SeriesDao,
-    private val chapterDao: ChapterDao,
     private val sourceManager: SourceManager,
 ) : ViewModel() {
 
@@ -733,7 +879,6 @@ class SourceMigrationViewModel @Inject constructor(
     fun migrateSeries(seriesId: Long, candidate: MigrationCandidate) {
         viewModelScope.launch(Dispatchers.IO) {
             val existing = seriesDao.getById(seriesId) ?: return@launch
-            // Preserve all local reading progress, tags, categories, history, and AniList binding!
             seriesDao.update(
                 existing.copy(
                     sourceId = candidate.targetSourceId,

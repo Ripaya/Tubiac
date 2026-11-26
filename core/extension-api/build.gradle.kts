@@ -33,4 +33,5 @@ dependencies {
     api(libs.okhttp)
     api(libs.jsoup)
     api(libs.rxjava)
+    implementation(libs.kotlinx.coroutines.core)
 }

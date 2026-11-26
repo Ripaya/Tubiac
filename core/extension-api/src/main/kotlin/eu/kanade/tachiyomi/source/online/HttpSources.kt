@@ -19,6 +19,11 @@ import java.security.MessageDigest
 object ExtensionNetworkBridge {
     @Volatile
     var sharedClient: OkHttpClient = OkHttpClient()
+
+    @Volatile
+    var userAgentProvider: () -> String = {
+        "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36"
+    }
 }
 
 fun GET(url: String, headers: Headers = Headers.headersOf()): Request =
@@ -45,9 +50,13 @@ abstract class HttpSource : CatalogueSource {
     val headers: Headers by lazy { headersBuilder().build() }
 
     protected open fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", ExtensionNetworkBridge.userAgentProvider())
 
-    open fun getMangaUrl(manga: SManga): String = baseUrl + manga.url
-    open fun getChapterUrl(chapter: SChapter): String = baseUrl + chapter.url
+    open fun getMangaUrl(manga: SManga): String =
+        if (manga.url.startsWith("http://") || manga.url.startsWith("https://")) manga.url else baseUrl + manga.url
+
+    open fun getChapterUrl(chapter: SChapter): String =
+        if (chapter.url.startsWith("http://") || chapter.url.startsWith("https://")) chapter.url else baseUrl + chapter.url
 
     protected abstract fun popularMangaRequest(page: Int): Request
     protected abstract fun popularMangaParse(response: Response): MangasPage

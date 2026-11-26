@@ -15,3 +15,4 @@ import kotlinx.serialization.Serializable
 @Serializable data class SeriesDetailRoute(val seriesId: Long)
 @Serializable data class ReaderRoute(val seriesId: Long, val chapterId: Long, val initialPage: Int = 0)
 @Serializable data class SourceMigrationRoute(val seriesId: Long)
+@Serializable data class SourceBrowseRoute(val sourceId: Long)
