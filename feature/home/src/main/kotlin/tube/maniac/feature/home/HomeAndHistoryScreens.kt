@@ -1,6 +1,10 @@
 package tube.maniac.feature.home
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Delete
@@ -23,10 +26,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -38,18 +38,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -72,8 +72,13 @@ import tube.maniac.core.database.dao.SeriesDao
 import tube.maniac.core.database.entity.SeriesEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.MatteCard
 import tube.maniac.core.designsystem.components.SeriesCoverCard
+import tube.maniac.core.designsystem.components.TabularBadge
 import tube.maniac.core.designsystem.components.TubiacSectionHeader
+import tube.maniac.core.designsystem.components.TubiacTopBar
+import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
 import tube.maniac.core.model.AniListMedia
 import tube.maniac.core.model.Chapter
@@ -174,177 +179,181 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Tubiac", style = MaterialTheme.typography.headlineMedium)
-                        if (state.incognitoMode) {
-                            Text(
-                                text = "Incognito active — history & sync paused",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = if (state.incognitoMode) "INCOGNITO // PAUSED SYNC" else "READING DESK",
+                    title = "Tubiac",
+                    actions = {
+                        IconButton(onClick = onOpenGlobalSearch) {
+                            Icon(Icons.Rounded.Search, contentDescription = "Global Search")
+                        }
+                        IconButton(onClick = viewModel::toggleIncognito) {
+                            Icon(
+                                imageVector = Icons.Rounded.VisibilityOff,
+                                contentDescription = "Toggle Incognito Mode",
+                                tint = if (state.incognitoMode) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                             )
                         }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onOpenGlobalSearch) {
-                        Icon(Icons.Rounded.Search, contentDescription = "Global Search")
-                    }
-                    IconButton(onClick = viewModel::toggleIncognito) {
-                        Icon(
-                            imageVector = Icons.Rounded.VisibilityOff,
-                            contentDescription = "Toggle Incognito Mode",
-                            tint = if (state.incognitoMode) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
-                    IconButton(onClick = onOpenHistory) {
-                        Icon(Icons.Rounded.History, contentDescription = "Reading History")
-                    }
-                },
-            )
-        },
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // 1. Continue Reading Carousel
-            item {
-                TubiacSectionHeader(
-                    title = "Continue Reading",
-                    actionLabel = if (state.continueReading.isNotEmpty()) "History" else null,
-                    onActionClick = onOpenHistory,
+                        IconButton(onClick = onOpenHistory) {
+                            Icon(Icons.Rounded.History, contentDescription = "Reading History")
+                        }
+                    },
                 )
-                if (state.continueReading.isEmpty()) {
-                    ExpressiveEmptyState(
-                        icon = Icons.Rounded.AutoStories,
-                        title = "Ready when you are",
-                        message = "Open a series from your Shelf or Browse to jump right back in here.",
-                        actionLabel = "Explore Sources",
-                        onAction = onOpenBrowse,
+            },
+        ) { innerPadding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentPadding = PaddingValues(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // 1. Continue Reading Carousel
+                item {
+                    TubiacSectionHeader(
+                        kicker = "IN PROGRESS",
+                        title = "Continue Reading",
+                        actionLabel = if (state.continueReading.isNotEmpty()) "History" else null,
+                        onActionClick = onOpenHistory,
                     )
-                } else {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(state.continueReading, key = { it.id }) { entry ->
-                            ContinueReadingCard(
-                                entry = entry,
-                                onResume = { onResumeChapter(entry.seriesId, entry.chapterId, entry.lastPageRead) },
-                                onOpenDetail = { onOpenSeriesDetail(entry.seriesId) },
-                            )
+                    if (state.continueReading.isEmpty()) {
+                        ExpressiveEmptyState(
+                            icon = Icons.Rounded.AutoStories,
+                            title = "Desk is clear",
+                            message = "Open any series from your Shelf or Browse sources to resume reading here.",
+                            actionLabel = "Explore Sources",
+                            onAction = onOpenBrowse,
+                        )
+                    } else {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            items(state.continueReading, key = { it.id }) { entry ->
+                                ContinueReadingCard(
+                                    entry = entry,
+                                    onResume = { onResumeChapter(entry.seriesId, entry.chapterId, entry.lastPageRead) },
+                                    onOpenDetail = { onOpenSeriesDetail(entry.seriesId) },
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // 2. Latest Released
-            if (state.latestReleased.isNotEmpty()) {
-                item {
-                    TubiacSectionHeader(title = "Latest Released")
-                    Column(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        state.latestReleased.take(6).forEach { chapter ->
-                            Card(
-                                onClick = { onResumeChapter(chapter.seriesId, chapter.id, chapter.lastPageRead) },
-                                shape = MaterialTheme.shapes.medium,
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
+                // 2. Latest Released
+                if (state.latestReleased.isNotEmpty()) {
+                    item {
+                        TubiacSectionHeader(
+                            kicker = "SERIALIZATION",
+                            title = "Latest Releases",
+                        )
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            state.latestReleased.take(6).forEach { chapter ->
+                                MatteCard(
+                                    onClick = { onResumeChapter(chapter.seriesId, chapter.id, chapter.lastPageRead) },
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = chapter.name,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            text = chapter.scanlator ?: "New chapter",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    FilledTonalButton(
-                                        onClick = { onResumeChapter(chapter.seriesId, chapter.id, chapter.lastPageRead) },
-                                        shape = CircleShape,
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text("Read")
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(end = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            Text(
+                                                text = chapter.name,
+                                                style = MaterialTheme.typography.titleSmall.tabular(),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                text = chapter.scanlator ?: "Serialized chapter",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        FilledTonalButton(
+                                            onClick = { onResumeChapter(chapter.seriesId, chapter.id, chapter.lastPageRead) },
+                                            shape = MaterialTheme.shapes.small,
+                                        ) {
+                                            Text("Read")
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // 3. Last Added
-            if (state.lastAdded.isNotEmpty()) {
-                item {
-                    TubiacSectionHeader(title = "Last Added")
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        items(state.lastAdded, key = { it.id }) { series ->
-                            SeriesCoverCard(
-                                title = series.displayTitle,
-                                coverUrl = series.displayCoverUrl,
-                                onClick = { onOpenSeriesDetail(series.id) },
-                                modifier = Modifier.width(124.dp),
-                            )
+                // 3. Last Added
+                if (state.lastAdded.isNotEmpty()) {
+                    item {
+                        TubiacSectionHeader(
+                            kicker = "ARCHIVE",
+                            title = "Recently Shelved",
+                        )
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(state.lastAdded, key = { it.id }) { series ->
+                                SeriesCoverCard(
+                                    title = series.displayTitle,
+                                    coverUrl = series.displayCoverUrl,
+                                    onClick = { onOpenSeriesDetail(series.id) },
+                                    modifier = Modifier.width(124.dp),
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // 4. Popular on AniList
-            item {
-                TubiacSectionHeader(
-                    title = "Popular",
-                    actionLabel = "Refresh",
-                    onActionClick = viewModel::refreshPopular,
-                )
-                if (state.popularAniList.isEmpty()) {
-                    Text(
-                        text = "No trending titles loaded yet. Connect to fetch AniList Popular.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                // 4. Popular on AniList
+                item {
+                    TubiacSectionHeader(
+                        kicker = "ANILIST CATALOG",
+                        title = "Popular Series",
+                        actionLabel = "Refresh",
+                        onActionClick = viewModel::refreshPopular,
                     )
-                } else {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        items(state.popularAniList, key = { it.id }) { media ->
-                            SeriesCoverCard(
-                                title = media.preferredTitle,
-                                coverUrl = media.coverLarge,
-                                subtitle = media.averageScore?.let { "★ $it%" },
-                                onClick = { viewModel.openPopularSeries(media, onOpenSeriesDetail) },
-                                modifier = Modifier.width(132.dp),
-                            )
+                    if (state.popularAniList.isEmpty()) {
+                        Text(
+                            text = "No trending titles loaded yet. Tap Refresh when online.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    } else {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(state.popularAniList, key = { it.id }) { media ->
+                                SeriesCoverCard(
+                                    title = media.preferredTitle,
+                                    coverUrl = media.coverLarge,
+                                    subtitle = media.averageScore?.let { "★ $it%" },
+                                    onClick = { viewModel.openPopularSeries(media, onOpenSeriesDetail) },
+                                    modifier = Modifier.width(132.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -365,11 +374,9 @@ private fun ContinueReadingCard(
         0.1f
     }
 
-    Card(
+    MatteCard(
         onClick = onOpenDetail,
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.width(268.dp),
+        modifier = Modifier.width(284.dp),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -381,13 +388,20 @@ private fun ContinueReadingCard(
                 contentDescription = entry.seriesTitle,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(width = 68.dp, height = 98.dp)
-                    .clip(MaterialTheme.shapes.small),
+                    .size(width = 70.dp, height = 102.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                TabularBadge(
+                    text = entry.sourceName.uppercase(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     text = entry.seriesTitle,
                     style = MaterialTheme.typography.titleSmall,
@@ -395,7 +409,7 @@ private fun ContinueReadingCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${entry.chapterName} • p.${entry.lastPageRead + 1}",
+                    text = "${entry.chapterName} • Page ${entry.lastPageRead + 1}",
                     style = MaterialTheme.typography.labelMedium.tabular(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -405,12 +419,12 @@ private fun ContinueReadingCard(
                     progress = { progress },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(CircleShape),
+                        .height(3.dp)
+                        .clip(MaterialTheme.shapes.extraSmall),
                 )
                 FilledTonalButton(
                     onClick = onResume,
-                    shape = CircleShape,
+                    shape = MaterialTheme.shapes.small,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 ) {
                     Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -500,129 +514,127 @@ fun HistoryScreen(
     var confirmClear by remember { mutableStateOf(false) }
     val timeFormatter = remember { SimpleDateFormat("HH:mm • MMM d", Locale.getDefault()) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("History") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    if (grouped.isNotEmpty()) {
-                        IconButton(onClick = { confirmClear = true }) {
-                            Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear History")
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "READING LOG",
+                    title = "History",
+                    onBack = onBack,
+                    actions = {
+                        if (grouped.isNotEmpty()) {
+                            IconButton(onClick = { confirmClear = true }) {
+                                Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear History")
+                            }
                         }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                if (incognito) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        shape = MaterialTheme.shapes.small,
+                    ) {
+                        Text(
+                            text = "Incognito Mode is on. Reading sessions will not be recorded.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(12.dp),
+                        )
                     }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            if (incognito) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
+                }
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = viewModel::updateQuery,
+                    placeholder = { Text("Search reading history") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    shape = MaterialTheme.shapes.small,
-                ) {
-                    Text(
-                        text = "Incognito Mode is on. Reading sessions will not be recorded.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(12.dp),
-                    )
-                }
-            }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = viewModel::updateQuery,
-                placeholder = { Text("Search reading history") },
-                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                singleLine = true,
-                shape = CircleShape,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-
-            if (grouped.isEmpty()) {
-                ExpressiveEmptyState(
-                    icon = Icons.Rounded.History,
-                    title = "No reading history",
-                    message = "Chapters you read appear here grouped by day for 1-tap resume.",
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    HistoryDateBucket.entries.forEach { bucket ->
-                        val itemsInBucket = grouped[bucket].orEmpty()
-                        if (itemsInBucket.isNotEmpty()) {
-                            item(key = "header_${bucket.name}") {
-                                Text(
-                                    text = bucket.label,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-                                )
-                            }
-                            items(itemsInBucket, key = { it.id }) { entry ->
-                                Card(
-                                    onClick = { onResumeChapter(entry.seriesId, entry.chapterId, entry.lastPageRead) },
-                                    shape = MaterialTheme.shapes.medium,
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                                    ),
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+
+                if (grouped.isEmpty()) {
+                    ExpressiveEmptyState(
+                        icon = Icons.Rounded.History,
+                        title = "No reading history",
+                        message = "Chapters you read appear here grouped by day for 1-tap resume.",
+                    )
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        HistoryDateBucket.entries.forEach { bucket ->
+                            val itemsInBucket = grouped[bucket].orEmpty()
+                            if (itemsInBucket.isNotEmpty()) {
+                                item(key = "header_${bucket.name}") {
+                                    Text(
+                                        text = bucket.label.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall.kicker,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                                    )
+                                }
+                                items(itemsInBucket, key = { it.id }) { entry ->
+                                    MatteCard(
+                                        onClick = { onResumeChapter(entry.seriesId, entry.chapterId, entry.lastPageRead) },
                                     ) {
-                                        AsyncImage(
-                                            model = entry.coverUrl,
-                                            contentDescription = entry.seriesTitle,
-                                            contentScale = ContentScale.Crop,
+                                        Row(
                                             modifier = Modifier
-                                                .size(width = 48.dp, height = 68.dp)
-                                                .clip(MaterialTheme.shapes.extraSmall),
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = entry.seriesTitle,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            Text(
-                                                text = "${entry.chapterName} • ${entry.sourceName}",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                            )
-                                            Text(
-                                                text = timeFormatter.format(Date(entry.lastReadAt)),
-                                                style = MaterialTheme.typography.labelSmall.tabular(),
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = { onResumeChapter(entry.seriesId, entry.chapterId, entry.lastPageRead) },
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                                         ) {
-                                            Icon(Icons.Rounded.PlayArrow, contentDescription = "Resume")
-                                        }
-                                        IconButton(onClick = { viewModel.deleteEntry(entry.id) }) {
-                                            Icon(Icons.Rounded.Delete, contentDescription = "Remove entry")
+                                            AsyncImage(
+                                                model = entry.coverUrl,
+                                                contentDescription = entry.seriesTitle,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .size(width = 48.dp, height = 68.dp)
+                                                    .clip(MaterialTheme.shapes.extraSmall)
+                                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), MaterialTheme.shapes.extraSmall),
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = entry.seriesTitle,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                                Text(
+                                                    text = "${entry.chapterName} • ${entry.sourceName}",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                )
+                                                Text(
+                                                    text = timeFormatter.format(Date(entry.lastReadAt)),
+                                                    style = MaterialTheme.typography.labelSmall.tabular(),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { onResumeChapter(entry.seriesId, entry.chapterId, entry.lastPageRead) },
+                                            ) {
+                                                Icon(Icons.Rounded.PlayArrow, contentDescription = "Resume")
+                                            }
+                                            IconButton(onClick = { viewModel.deleteEntry(entry.id) }) {
+                                                Icon(Icons.Rounded.Delete, contentDescription = "Remove entry")
+                                            }
                                         }
                                     }
                                 }

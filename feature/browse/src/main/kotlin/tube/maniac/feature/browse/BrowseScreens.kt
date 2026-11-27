@@ -1,5 +1,7 @@
 package tube.maniac.feature.browse
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,9 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
@@ -28,8 +30,6 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -41,23 +41,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -87,6 +85,11 @@ import tube.maniac.core.database.entity.ExtensionRepoEntity
 import tube.maniac.core.database.entity.SeriesEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.MatteCard
+import tube.maniac.core.designsystem.components.MatteSegmentedTabs
+import tube.maniac.core.designsystem.components.TubiacTopBar
+import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
 import tube.maniac.core.extension.loader.ExtensionRepoManager
 import tube.maniac.core.extension.loader.LocalSource
@@ -172,6 +175,11 @@ class BrowseViewModel @Inject constructor(
 
     init {
         sourceManager.reloadExtensions()
+        viewModelScope.launch {
+            if (repoDao.getAll().any { it.enabled }) {
+                refreshRepos()
+            }
+        }
     }
 
     fun selectTab(tab: BrowseSubTab) {
@@ -263,86 +271,83 @@ fun BrowseScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showAddRepoDialog by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Browse") },
-                actions = {
-                    IconButton(onClick = onOpenGlobalSearch) {
-                        Icon(Icons.Rounded.Search, contentDescription = "Global Search")
-                    }
-                    IconButton(onClick = viewModel::refreshAll) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "Reload extensions & repositories")
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            if (state.activeTab == BrowseSubTab.REPOS) {
-                FloatingActionButton(
-                    onClick = { showAddRepoDialog = true },
-                    shape = CircleShape,
-                ) {
-                    Icon(Icons.Rounded.Add, contentDescription = "Add Repo Store")
-                }
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                BrowseSubTab.entries.forEachIndexed { idx, tab ->
-                    SegmentedButton(
-                        selected = state.activeTab == tab,
-                        onClick = { viewModel.selectTab(tab) },
-                        shape = SegmentedButtonDefaults.itemShape(idx, BrowseSubTab.entries.size),
-                    ) { Text(tab.label) }
-                }
-            }
-
-            state.statusMessage?.let { msg ->
-                Text(
-                    text = msg,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (msg.contains("Errors:") || msg.contains("failed", ignoreCase = true)) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "CATALOGUE",
+                    title = "Browse",
+                    actions = {
+                        IconButton(onClick = onOpenGlobalSearch) {
+                            Icon(Icons.Rounded.Search, contentDescription = "Global Search")
+                        }
+                        IconButton(onClick = viewModel::refreshAll) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = "Reload extensions & repositories")
+                        }
                     },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
-            }
+            },
+            floatingActionButton = {
+                if (state.activeTab == BrowseSubTab.REPOS) {
+                    FloatingActionButton(
+                        onClick = { showAddRepoDialog = true },
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Icon(Icons.Rounded.Add, contentDescription = "Add Repo Store")
+                    }
+                }
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                MatteSegmentedTabs(
+                    options = BrowseSubTab.entries.map { it.label },
+                    selectedIndex = BrowseSubTab.entries.indexOf(state.activeTab).coerceAtLeast(0),
+                    onSelect = { idx -> viewModel.selectTab(BrowseSubTab.entries[idx]) },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
 
-            when (state.activeTab) {
-                BrowseSubTab.SOURCES -> SourcesList(
-                    sources = state.sources,
-                    onGlobalSearch = onOpenGlobalSearch,
-                    onOpenSource = onOpenSource,
-                    onOpenWebView = onOpenWebView,
-                )
+                state.statusMessage?.let { msg ->
+                    Text(
+                        text = msg,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (msg.contains("Errors:") || msg.contains("failed", ignoreCase = true)) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
 
-                BrowseSubTab.EXTENSIONS -> ExtensionsList(
-                    state = state,
-                    onSelectTab = viewModel::selectExtensionTab,
-                    onSelectLang = viewModel::selectLang,
-                    onInstall = viewModel::installExtension,
-                    onUninstall = viewModel::uninstallExtension,
-                )
+                when (state.activeTab) {
+                    BrowseSubTab.SOURCES -> SourcesList(
+                        sources = state.sources,
+                        onGlobalSearch = onOpenGlobalSearch,
+                        onOpenSource = onOpenSource,
+                        onOpenWebView = onOpenWebView,
+                    )
 
-                BrowseSubTab.REPOS -> ReposList(
-                    repos = state.repos,
-                    onToggle = viewModel::toggleRepo,
-                    onToggleTrusted = viewModel::toggleRepoTrusted,
-                    onDelete = viewModel::deleteRepo,
-                    onAddClick = { showAddRepoDialog = true },
-                )
+                    BrowseSubTab.EXTENSIONS -> ExtensionsList(
+                        state = state,
+                        onSelectTab = viewModel::selectExtensionTab,
+                        onSelectLang = viewModel::selectLang,
+                        onInstall = viewModel::installExtension,
+                        onUninstall = viewModel::uninstallExtension,
+                    )
+
+                    BrowseSubTab.REPOS -> ReposList(
+                        repos = state.repos,
+                        onToggle = viewModel::toggleRepo,
+                        onToggleTrusted = viewModel::toggleRepoTrusted,
+                        onDelete = viewModel::deleteRepo,
+                        onAddClick = { showAddRepoDialog = true },
+                    )
+                }
             }
         }
     }
@@ -414,7 +419,7 @@ private fun SourcesList(
         item {
             FilledTonalButton(
                 onClick = onGlobalSearch,
-                shape = CircleShape,
+                shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(Icons.Rounded.Search, contentDescription = null)
@@ -423,10 +428,8 @@ private fun SourcesList(
             }
         }
         items(sources, key = { it.id }) { source ->
-            Card(
+            MatteCard(
                 onClick = { onOpenSource(source.id) },
-                shape = MaterialTheme.shapes.medium,
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             ) {
                 Row(
                     modifier = Modifier
@@ -531,9 +534,9 @@ private fun ExtensionsList(
         }
 
         if (state.loadErrors.isNotEmpty()) {
-            Card(
-                shape = MaterialTheme.shapes.medium,
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)),
+            MatteCard(
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                borderColor = MaterialTheme.colorScheme.error.copy(alpha = 0.45f),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp),
@@ -559,10 +562,7 @@ private fun ExtensionsList(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(list, key = { it.pkgName }) { ext ->
-                    Card(
-                        shape = MaterialTheme.shapes.medium,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                    ) {
+                    MatteCard {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -581,8 +581,9 @@ private fun ExtensionsList(
                                         contentDescription = ext.name,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(MaterialTheme.shapes.small),
+                                            .size(38.dp)
+                                            .clip(MaterialTheme.shapes.small)
+                                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), MaterialTheme.shapes.small),
                                     )
                                 }
                                 Column {
@@ -598,17 +599,17 @@ private fun ExtensionsList(
                             }
                             when (ext.installState) {
                                 ExtensionInstallState.INSTALLED -> {
-                                    OutlinedButton(onClick = { onUninstall(ext.pkgName) }, shape = CircleShape) {
+                                    OutlinedButton(onClick = { onUninstall(ext.pkgName) }, shape = MaterialTheme.shapes.small) {
                                         Text("Uninstall")
                                     }
                                 }
                                 ExtensionInstallState.UPDATE_AVAILABLE -> {
-                                    FilledTonalButton(onClick = { onInstall(ext) }, shape = CircleShape) {
+                                    FilledTonalButton(onClick = { onInstall(ext) }, shape = MaterialTheme.shapes.small) {
                                         Text("Update")
                                     }
                                 }
                                 else -> {
-                                    FilledTonalButton(onClick = { onInstall(ext) }, shape = CircleShape) {
+                                    FilledTonalButton(onClick = { onInstall(ext) }, shape = MaterialTheme.shapes.small) {
                                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(4.dp))
                                         Text("Install")
@@ -645,10 +646,7 @@ private fun ReposList(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(repos, key = { it.id }) { repo ->
-                Card(
-                    shape = MaterialTheme.shapes.medium,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                ) {
+                MatteCard {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -676,6 +674,7 @@ private fun ReposList(
                                     selected = repo.trusted,
                                     onClick = { onToggleTrusted(repo.id, !repo.trusted) },
                                     label = { Text(if (repo.trusted) "Trusted" else "Trust Repo") },
+                                    shape = MaterialTheme.shapes.small,
                                 )
                             }
                         }
@@ -797,90 +796,90 @@ fun GlobalSearchScreen(
     val srcResults by viewModel.sourceResults.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Global Search") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = viewModel::updateQuery,
-                    placeholder = { Text("Search installed sources & AniList...") },
-                    singleLine = true,
-                    shape = CircleShape,
-                    modifier = Modifier.weight(1f),
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "FEDERATED SEARCH",
+                    title = "Global Search",
+                    onBack = onBack,
                 )
-                FilledTonalButton(onClick = viewModel::executeSearch, shape = CircleShape) {
-                    Text("Search")
-                }
-            }
-            if (loading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (srcResults.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Installed Sources (${srcResults.size})",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = viewModel::updateQuery,
+                        placeholder = { Text("Search installed sources & AniList...") },
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { viewModel.executeSearch() }),
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilledTonalButton(onClick = viewModel::executeSearch, shape = MaterialTheme.shapes.small) {
+                        Text("Search")
                     }
-                    items(srcResults, key = { "${it.sourceId}_${it.manga.url}" }) { item ->
-                        Card(
-                            onClick = { viewModel.openOrCreateSourceSeries(item, onOpenSeriesDetail) },
-                            shape = MaterialTheme.shapes.medium,
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-                                Text(item.manga.title, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    text = item.sourceName,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                }
+                if (loading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (srcResults.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "INSTALLED SOURCES (${srcResults.size})",
+                                style = MaterialTheme.typography.labelSmall.kicker,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        items(srcResults, key = { "${it.sourceId}_${it.manga.url}" }) { item ->
+                            MatteCard(
+                                onClick = { viewModel.openOrCreateSourceSeries(item, onOpenSeriesDetail) },
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                                    Text(item.manga.title, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        text = item.sourceName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }
-                }
-                if (aniResults.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "AniList (${aniResults.size})",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    items(aniResults, key = { it.id }) { media ->
-                        Card(
-                            onClick = { viewModel.openOrCreateSeries(media, onOpenSeriesDetail) },
-                            shape = MaterialTheme.shapes.medium,
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-                                Text(media.preferredTitle, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    text = "${media.format.name} • ${media.genres.take(3).joinToString(", ")}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                    if (aniResults.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "ANILIST (${aniResults.size})",
+                                style = MaterialTheme.typography.labelSmall.kicker,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        items(aniResults, key = { it.id }) { media ->
+                            MatteCard(
+                                onClick = { viewModel.openOrCreateSeries(media, onOpenSeriesDetail) },
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                                    Text(media.preferredTitle, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        text = "${media.format.name} • ${media.genres.take(3).joinToString(", ")}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }
@@ -945,61 +944,60 @@ fun SourceMigrationScreen(
         viewModel.loadCandidatesFor(seriesId)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Migrate Source") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = "Transfer reading progress, categories, tags, and AniList binding to another installed source.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            message?.let {
-                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
-            }
-            if (candidates.isEmpty()) {
-                ExpressiveEmptyState(
-                    icon = Icons.Rounded.SwapHoriz,
-                    title = "No alternate sources installed",
-                    message = "Install another extension or configure Local Source to migrate this series.",
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "LIBRARY",
+                    title = "Migrate Source",
+                    onBack = onBack,
                 )
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(candidates, key = { it.targetSourceId }) { candidate ->
-                        Card(
-                            onClick = { viewModel.migrateSeries(seriesId, candidate) },
-                            shape = MaterialTheme.shapes.medium,
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Transfer reading progress, categories, tags, and AniList binding to another installed source.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                message?.let {
+                    Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
+                }
+                if (candidates.isEmpty()) {
+                    ExpressiveEmptyState(
+                        icon = Icons.Rounded.SwapHoriz,
+                        title = "No alternate sources installed",
+                        message = "Install another extension or configure Local Source to migrate this series.",
+                    )
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(candidates, key = { it.targetSourceId }) { candidate ->
+                            MatteCard(
+                                onClick = { viewModel.migrateSeries(seriesId, candidate) },
                             ) {
-                                Column {
-                                    Text(candidate.targetSourceName, style = MaterialTheme.typography.titleSmall)
-                                    Text(candidate.targetTitle, style = MaterialTheme.typography.bodyMedium)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column {
+                                        Text(candidate.targetSourceName, style = MaterialTheme.typography.titleSmall)
+                                        Text(candidate.targetTitle, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    FilledTonalButton(
+                                        onClick = { viewModel.migrateSeries(seriesId, candidate) },
+                                        shape = MaterialTheme.shapes.small,
+                                    ) { Text("Migrate") }
                                 }
-                                FilledTonalButton(
-                                    onClick = { viewModel.migrateSeries(seriesId, candidate) },
-                                    shape = CircleShape,
-                                ) { Text("Migrate") }
                             }
                         }
                     }

@@ -20,11 +20,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import dagger.hilt.android.AndroidEntryPoint
+import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.designsystem.theme.TubiacTheme
 import tube.maniac.core.network.NetworkRuntimeConfig
 import javax.inject.Inject
@@ -55,13 +54,10 @@ class WebViewActivity : ComponentActivity() {
             TubiacTheme {
                 Scaffold(
                     topBar = {
-                        TopAppBar(
-                            title = { Text("WebView Solver") },
-                            navigationIcon = {
-                                IconButton(onClick = { finish() }) {
-                                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Close")
-                                }
-                            },
+                        TubiacTopBar(
+                            kicker = "IN-APP BROWSER",
+                            title = "WebView Solver",
+                            onBack = { finish() },
                             actions = {
                                 IconButton(
                                     onClick = {

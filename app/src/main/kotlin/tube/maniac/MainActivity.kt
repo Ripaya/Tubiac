@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -19,7 +20,9 @@ import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -50,6 +53,8 @@ import tube.maniac.core.anilist.AniListAuthHelper
 import tube.maniac.core.anilist.AniListGraphQlClient
 import tube.maniac.core.database.SettingsRepository
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.matteGrain
 import tube.maniac.core.designsystem.theme.TubiacTheme
 import tube.maniac.core.extension.loader.LocalSource
 import tube.maniac.core.network.NetworkRuntimeConfig
@@ -62,7 +67,14 @@ import tube.maniac.feature.downloads.DownloadsScreen
 import tube.maniac.feature.home.HistoryScreen
 import tube.maniac.feature.home.HomeScreen
 import tube.maniac.feature.reader.ReaderScreen
+import tube.maniac.feature.settings.SettingsAboutScreen
+import tube.maniac.feature.settings.SettingsAppearanceScreen
+import tube.maniac.feature.settings.SettingsBackupScreen
+import tube.maniac.feature.settings.SettingsDownloadsScreen
+import tube.maniac.feature.settings.SettingsPrivacyScreen
+import tube.maniac.feature.settings.SettingsReaderScreen
 import tube.maniac.feature.settings.SettingsScreen
+import tube.maniac.feature.settings.SettingsSyncScreen
 import tube.maniac.feature.shelf.ShelfScreen
 import tube.maniac.feature.shelf.UpdateErrorsScreen
 import tube.maniac.navigation.BrowseRoute
@@ -72,7 +84,14 @@ import tube.maniac.navigation.HistoryRoute
 import tube.maniac.navigation.HomeRoute
 import tube.maniac.navigation.ReaderRoute
 import tube.maniac.navigation.SeriesDetailRoute
+import tube.maniac.navigation.SettingsAboutRoute
+import tube.maniac.navigation.SettingsAppearanceRoute
+import tube.maniac.navigation.SettingsBackupRoute
+import tube.maniac.navigation.SettingsDownloadsRoute
+import tube.maniac.navigation.SettingsPrivacyRoute
+import tube.maniac.navigation.SettingsReaderRoute
 import tube.maniac.navigation.SettingsRoute
+import tube.maniac.navigation.SettingsSyncRoute
 import tube.maniac.navigation.ShelfRoute
 import tube.maniac.navigation.SourceBrowseRoute
 import tube.maniac.navigation.SourceMigrationRoute
@@ -146,18 +165,21 @@ class MainActivity : FragmentActivity() {
             TubiacTheme(
                 themeMode = settings.themeMode,
                 useDynamicColor = settings.useDynamicColor,
+                useMatteTexture = settings.useMatteTexture,
                 animationSpeed = settings.animationSpeed,
             ) {
                 when {
                     settings.biometricLockEnabled && !unlocked -> {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            ExpressiveEmptyState(
-                                icon = Icons.Rounded.Lock,
-                                title = "Tubiac is Locked",
-                                message = "Authenticate with biometrics or device PIN to continue.",
-                                actionLabel = "Unlock",
-                                onAction = ::promptBiometricUnlock,
-                            )
+                        MatteBackground {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                ExpressiveEmptyState(
+                                    icon = Icons.Rounded.Lock,
+                                    title = "Tubiac is Locked",
+                                    message = "Authenticate with biometrics or device PIN to continue.",
+                                    actionLabel = "Unlock",
+                                    onAction = ::promptBiometricUnlock,
+                                )
+                            }
                         }
                     }
 
@@ -248,31 +270,41 @@ private fun TubiacMainShell(
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = currentDest?.hasRoute(HomeRoute::class) == true,
-                        onClick = { navController.navigateTopLevel(HomeRoute) },
-                        icon = { Icon(Icons.Rounded.Home, contentDescription = "Home") },
-                        label = { Text("Home") },
+                Column {
+                    HorizontalDivider(
+                        thickness = 0.75.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
                     )
-                    NavigationBarItem(
-                        selected = currentDest?.hasRoute(ShelfRoute::class) == true,
-                        onClick = { navController.navigateTopLevel(ShelfRoute) },
-                        icon = { Icon(Icons.Rounded.CollectionsBookmark, contentDescription = "Shelf") },
-                        label = { Text("Shelf") },
-                    )
-                    NavigationBarItem(
-                        selected = currentDest?.hasRoute(BrowseRoute::class) == true,
-                        onClick = { navController.navigateTopLevel(BrowseRoute) },
-                        icon = { Icon(Icons.Rounded.Explore, contentDescription = "Browse") },
-                        label = { Text("Browse") },
-                    )
-                    NavigationBarItem(
-                        selected = currentDest?.hasRoute(SettingsRoute::class) == true,
-                        onClick = { navController.navigateTopLevel(SettingsRoute) },
-                        icon = { Icon(Icons.Rounded.Settings, contentDescription = "Settings") },
-                        label = { Text("Settings") },
-                    )
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        tonalElevation = 0.dp,
+                        modifier = Modifier.matteGrain(strength = 0.85f),
+                    ) {
+                        NavigationBarItem(
+                            selected = currentDest?.hasRoute(HomeRoute::class) == true,
+                            onClick = { navController.navigateTopLevel(HomeRoute) },
+                            icon = { Icon(Icons.Rounded.Home, contentDescription = "Home") },
+                            label = { Text("Home") },
+                        )
+                        NavigationBarItem(
+                            selected = currentDest?.hasRoute(ShelfRoute::class) == true,
+                            onClick = { navController.navigateTopLevel(ShelfRoute) },
+                            icon = { Icon(Icons.Rounded.CollectionsBookmark, contentDescription = "Shelf") },
+                            label = { Text("Shelf") },
+                        )
+                        NavigationBarItem(
+                            selected = currentDest?.hasRoute(BrowseRoute::class) == true,
+                            onClick = { navController.navigateTopLevel(BrowseRoute) },
+                            icon = { Icon(Icons.Rounded.Explore, contentDescription = "Browse") },
+                            label = { Text("Browse") },
+                        )
+                        NavigationBarItem(
+                            selected = currentDest?.hasRoute(SettingsRoute::class) == true,
+                            onClick = { navController.navigateTopLevel(SettingsRoute) },
+                            icon = { Icon(Icons.Rounded.Settings, contentDescription = "Settings") },
+                            label = { Text("Settings") },
+                        )
+                    }
                 }
             }
         },
@@ -325,10 +357,49 @@ private fun TubiacMainShell(
 
             composable<SettingsRoute> {
                 SettingsScreen(
-                    onOpenDownloads = { navController.navigate(DownloadsRoute) },
+                    onOpenAppearance = { navController.navigate(SettingsAppearanceRoute) },
+                    onOpenSync = { navController.navigate(SettingsSyncRoute) },
+                    onOpenBackup = { navController.navigate(SettingsBackupRoute) },
+                    onOpenDownloadsSettings = { navController.navigate(SettingsDownloadsRoute) },
+                    onOpenReader = { navController.navigate(SettingsReaderRoute) },
+                    onOpenPrivacy = { navController.navigate(SettingsPrivacyRoute) },
+                    onOpenAbout = { navController.navigate(SettingsAboutRoute) },
+                )
+            }
+
+            composable<SettingsAppearanceRoute> {
+                SettingsAppearanceScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable<SettingsSyncRoute> {
+                SettingsSyncScreen(
+                    onBack = { navController.popBackStack() },
                     onOpenAniListLogin = onOpenAniListLogin,
+                )
+            }
+
+            composable<SettingsBackupRoute> {
+                SettingsBackupScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable<SettingsDownloadsRoute> {
+                SettingsDownloadsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenDownloadQueue = { navController.navigate(DownloadsRoute) },
                     onPickLocalFolder = onPickLocalFolder,
                 )
+            }
+
+            composable<SettingsReaderRoute> {
+                SettingsReaderScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable<SettingsPrivacyRoute> {
+                SettingsPrivacyScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable<SettingsAboutRoute> {
+                SettingsAboutScreen(onBack = { navController.popBackStack() })
             }
 
             composable<HistoryRoute> {

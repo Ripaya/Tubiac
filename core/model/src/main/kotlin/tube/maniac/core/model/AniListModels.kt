@@ -145,7 +145,8 @@ enum class AutoBackupFrequency {
 data class AppSettings(
     val onboardingCompleted: Boolean = false,
     val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    val useDynamicColor: Boolean = true,
+    val useDynamicColor: Boolean = false,
+    val useMatteTexture: Boolean = true,
     val useCoverDerivedDetailAccent: Boolean = true,
     val animationSpeed: AnimationSpeed = AnimationSpeed.NORMAL,
     val incognitoMode: Boolean = false,

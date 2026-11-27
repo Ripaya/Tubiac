@@ -76,6 +76,7 @@ CORE_PROBES = [
         "name": "Mangitto (mangtto.com)",
         "url": "https://mangtto.com",
         "method": "GET",
+        "advisory_only": True,
     },
 ]
 
@@ -183,16 +184,19 @@ def main() -> int:
     args = parser.parse_args()
 
     results: list[ProbeResult] = []
+    advisories: list[ProbeResult] = []
     for probe in CORE_PROBES:
-        results.append(
-            classify_probe(
-                name=probe["name"],
-                url=probe["url"],
-                method=probe.get("method", "GET"),
-                body=probe.get("body"),
-                extra_headers=probe.get("headers"),
-            )
+        res = classify_probe(
+            name=probe["name"],
+            url=probe["url"],
+            method=probe.get("method", "GET"),
+            body=probe.get("body"),
+            extra_headers=probe.get("headers"),
         )
+        if probe.get("advisory_only"):
+            advisories.append(res)
+        else:
+            results.append(res)
 
     for extra_url in discover_repo_urls(Path(args.root)):
         results.append(classify_probe(name=f"Codebase link ({extra_url})", url=extra_url))
@@ -208,12 +212,29 @@ def main() -> int:
     for r in results:
         md_lines.append(f"| {r.name} | `{r.status}` | {r.http_code} | {r.latency_ms}ms | {r.detail} |")
 
+    if advisories:
+        md_lines.extend([
+            "",
+            "#### External Source Advisories (CI Datacenter Probe)",
+            "",
+            "| Source / Domain | Status | HTTP | Latency | Mitigation in Tubiac |",
+            "| --- | --- | --- | --- | --- |",
+        ])
+        for a in advisories:
+            mitigation = (
+                "Handled client-side via DoH + Custom User-Agent + WebView Solver (`IpBlockedException`)"
+                if a.status in ("IP_BLOCKED", "CLOUDFLARE_CHALLENGE")
+                else a.detail
+            )
+            md_lines.append(f"| {a.name} | `{a.status}` | {a.http_code} | {a.latency_ms}ms | {mitigation} |")
+
     md_text = "\n".join(md_lines) + "\n"
     payload = {
         "healthy_count": len(results) - len(unhealthy),
         "unhealthy_count": len(unhealthy),
         "has_issues": bool(unhealthy),
         "results": [asdict(r) for r in results],
+        "advisories": [asdict(a) for a in advisories],
     }
 
     if args.json_out:

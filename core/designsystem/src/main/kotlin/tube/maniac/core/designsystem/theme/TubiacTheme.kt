@@ -8,16 +8,22 @@ import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import tube.maniac.core.model.AnimationSpeed
 import tube.maniac.core.model.AppThemeMode
 
+val LocalMatteTextureEnabled = compositionLocalOf { true }
+val LocalIsDarkSurface = compositionLocalOf { true }
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun TubiacTheme(
     themeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    useDynamicColor: Boolean = true,
+    useDynamicColor: Boolean = false,
+    useMatteTexture: Boolean = true,
     animationSpeed: AnimationSpeed = AnimationSpeed.NORMAL,
     coverSeedColor: Color? = null,
     content: @Composable () -> Unit,
@@ -46,11 +52,16 @@ fun TubiacTheme(
         AnimationSpeed.NORMAL, AnimationSpeed.FAST -> MotionScheme.expressive()
     }
 
-    MaterialExpressiveTheme(
-        colorScheme = themedScheme,
-        motionScheme = motionScheme,
-        shapes = TubiacShapes,
-        typography = TubiacTypography,
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalMatteTextureEnabled provides useMatteTexture,
+        LocalIsDarkSurface provides isDark,
+    ) {
+        MaterialExpressiveTheme(
+            colorScheme = themedScheme,
+            motionScheme = motionScheme,
+            shapes = TubiacShapes,
+            typography = TubiacTypography,
+            content = content,
+        )
+    }
 }

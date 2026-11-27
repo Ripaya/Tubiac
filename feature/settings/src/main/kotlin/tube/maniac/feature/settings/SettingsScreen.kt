@@ -13,12 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.CleaningServices
@@ -28,24 +26,22 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -74,6 +71,13 @@ import tube.maniac.core.anilist.AniListSyncEngine
 import tube.maniac.core.database.BackupFormat
 import tube.maniac.core.database.BackupManager
 import tube.maniac.core.database.SettingsRepository
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.MatteCard
+import tube.maniac.core.designsystem.components.MatteNavigationRow
+import tube.maniac.core.designsystem.components.TabularBadge
+import tube.maniac.core.designsystem.components.TubiacAppMark
+import tube.maniac.core.designsystem.components.TubiacTopBar
+import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
 import tube.maniac.core.model.AniListSyncPolicy
 import tube.maniac.core.model.AniListUser
@@ -81,7 +85,6 @@ import tube.maniac.core.model.AnimationSpeed
 import tube.maniac.core.model.AppSettings
 import tube.maniac.core.model.AppThemeMode
 import tube.maniac.core.model.AutoBackupFrequency
-import tube.maniac.core.model.ConflictResolution
 import tube.maniac.core.model.DoHProvider
 import tube.maniac.core.model.DownloadStorageFormat
 import tube.maniac.core.model.RateLimitStatus
@@ -122,6 +125,10 @@ class SettingsViewModel @Inject constructor(
     ) { settings, user, rateLimit, feedback ->
         SettingsUiState(settings, user, rateLimit, feedback)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
+
+    fun clearFeedback() {
+        feedbackFlow.value = null
+    }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch {
@@ -197,19 +204,369 @@ class SettingsViewModel @Inject constructor(
     fun cleanOrphanedDownloads() {
         viewModelScope.launch(Dispatchers.IO) {
             val dir = context.getExternalFilesDir("downloads")
-            val removed = dir?.listFiles()?.count { it.isDirectory && it.listFiles().isNullOrEmpty() } ?: 0
-            dir?.listFiles()?.filter { it.isDirectory && it.listFiles().isNullOrEmpty() }?.forEach(File::deleteRecursively)
-            feedbackFlow.value = "Removed $removed empty orphaned download folder(s)."
+            val emptyDirs = dir?.listFiles()?.filter { it.isDirectory && it.listFiles().isNullOrEmpty() }.orEmpty()
+            emptyDirs.forEach(File::deleteRecursively)
+            feedbackFlow.value = "Removed ${emptyDirs.size} empty orphaned download folder(s)."
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Main categorized Settings Hub linking each section to its own dedicated screen. */
 @Composable
 fun SettingsScreen(
-    onOpenDownloads: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onOpenSync: () -> Unit,
+    onOpenBackup: () -> Unit,
+    onOpenDownloadsSettings: () -> Unit,
+    onOpenReader: () -> Unit,
+    onOpenPrivacy: () -> Unit,
+    onOpenAbout: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = state.settings
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val appMeta = rememberAppPackageMeta(context)
+
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "PREFERENCES",
+                    title = "Settings",
+                )
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                item {
+                    MatteCard(onClick = onOpenAbout) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            TubiacAppMark(size = 46.dp)
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text("Tubiac Reader", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    text = "v${appMeta.versionName} • Build ${appMeta.versionCode}",
+                                    style = MaterialTheme.typography.labelMedium.tabular(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TabularBadge(
+                                text = if (settings.useMatteTexture) "MATTE" else "CLEAN",
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Text(
+                        text = "WORKSPACE & DISPLAY",
+                        style = MaterialTheme.typography.labelSmall.kicker,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Palette,
+                        title = "Appearance & Matte Surface",
+                        subtitle = "Theme palette, paper-grain matte texture, dynamic tint & motion",
+                        badge = settings.themeMode.name.replace("_", " "),
+                        onClick = onOpenAppearance,
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Tune,
+                        title = "Reader & Shelf Defaults",
+                        subtitle = "Smart layout detection, tap zones, volume keys & library badges",
+                        badge = settings.readerPreferences.tapZonePreset.name.replace("_", " "),
+                        onClick = onOpenReader,
+                    )
+                }
+
+                item {
+                    Text(
+                        text = "DATA & STORAGE",
+                        style = MaterialTheme.typography.labelSmall.kicker,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Sync,
+                        title = "AniList & Sync Policy",
+                        subtitle = "Account sign-in, request budget & per-field local/sync locks",
+                        badge = state.anilistUser?.name ?: "Local",
+                        onClick = onOpenSync,
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Backup,
+                        title = "Backup & Database",
+                        subtitle = ".tachibk & JSON+ZIP exports, selective restore & SQLite vacuum",
+                        badge = settings.autoBackupFrequency.name,
+                        onClick = onOpenBackup,
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Download,
+                        title = "Downloads & Local Storage",
+                        subtitle = "Queue, SAF folder, concurrency & CBZ archive storage format",
+                        badge = "${settings.concurrentPageDownloads}x",
+                        onClick = onOpenDownloadsSettings,
+                    )
+                }
+
+                item {
+                    Text(
+                        text = "SECURITY & PROJECT",
+                        style = MaterialTheme.typography.labelSmall.kicker,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Security,
+                        title = "Privacy & Network",
+                        subtitle = "Incognito, biometric lock, FLAG_SECURE, User-Agent & DoH resolver",
+                        badge = settings.dohProvider.name,
+                        onClick = onOpenPrivacy,
+                    )
+                }
+
+                item {
+                    MatteNavigationRow(
+                        icon = Icons.Rounded.Info,
+                        title = "About Tubiac",
+                        subtitle = "Version info, changelog, feedback form, bug reports & GitHub repo",
+                        badge = "v${appMeta.versionName}",
+                        onClick = onOpenAbout,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SettingsAppearanceScreen(
+    onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = state.settings
+
+    SettingsCategoryScaffold(
+        kicker = "SETTINGS // APPEARANCE",
+        title = "Appearance & Matte Surface",
+        feedback = state.statusFeedback,
+        onBack = onBack,
+    ) {
+        item {
+            SettingsMatteGroup(title = "Theme Palette", icon = Icons.Rounded.Palette) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AppThemeMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = settings.themeMode == mode,
+                            onClick = { viewModel.updateSettings { it.copy(themeMode = mode) } },
+                            label = { Text(mode.name.replace("_", " ")) },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                SettingsToggleRow(
+                    title = "Matte Paper-Grain Texture",
+                    subtitle = "Apply subtle editorial micro-grain and hairline cards app-wide",
+                    checked = settings.useMatteTexture,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(useMatteTexture = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Android 12+ Dynamic Color",
+                    subtitle = "Use wallpaper palette; off uses Washi Paper & Sumi Ink signature",
+                    checked = settings.useDynamicColor,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(useDynamicColor = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Cover-Derived Accent on Detail",
+                    subtitle = "Tint Series Detail accents from artwork palette",
+                    checked = settings.useCoverDerivedDetailAccent,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(useCoverDerivedDetailAccent = v) } },
+                )
+            }
+        }
+
+        item {
+            SettingsMatteGroup(title = "Motion & Transitions", icon = Icons.Rounded.Tune) {
+                Text("Animation Speed", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnimationSpeed.entries.forEach { spd ->
+                        FilterChip(
+                            selected = settings.animationSpeed == spd,
+                            onClick = { viewModel.updateSettings { it.copy(animationSpeed = spd) } },
+                            label = { Text(spd.name) },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsSyncScreen(
+    onBack: () -> Unit,
     onOpenAniListLogin: () -> Unit,
-    onPickLocalFolder: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val policy = state.settings.syncPolicy
+
+    SettingsCategoryScaffold(
+        kicker = "SETTINGS // SYNC HUB",
+        title = "AniList & Sync Policy",
+        feedback = state.statusFeedback,
+        onBack = onBack,
+    ) {
+        item {
+            SettingsMatteGroup(title = "AniList Account", icon = Icons.Rounded.Sync) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = state.anilistUser?.name ?: "AniList Not Connected",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = "Rate limit: ${state.rateLimitStatus.remaining}/${state.rateLimitStatus.limit} req/min" +
+                                (if (state.rateLimitStatus.isDegradedMode) " (Degraded)" else "") +
+                                " • Queued: ${state.rateLimitStatus.pendingMutationsCount}",
+                            style = MaterialTheme.typography.labelMedium.tabular(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (state.anilistUser == null) {
+                        Button(onClick = onOpenAniListLogin, shape = MaterialTheme.shapes.small) { Text("Sign In") }
+                    } else {
+                        OutlinedButton(onClick = viewModel::disconnectAniList, shape = MaterialTheme.shapes.small) {
+                            Text("Disconnect")
+                        }
+                    }
+                }
+                FilledTonalButton(
+                    onClick = viewModel::syncAniListNow,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Flush Pending Sync Queue")
+                }
+            }
+        }
+
+        item {
+            SettingsMatteGroup(title = "Field Sync Policy Matrix", icon = Icons.Rounded.Lock) {
+                PolicyMatrixRow(
+                    field = "Chapter Reading Progress",
+                    synced = policy.chapterProgress == SyncFieldPolicy.SYNCED_TO_ANILIST,
+                    onToggle = { s ->
+                        viewModel.updateSyncPolicy {
+                            it.copy(chapterProgress = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
+                        }
+                    },
+                )
+                PolicyMatrixRow(
+                    field = "Reading Status",
+                    synced = policy.readingStatus == SyncFieldPolicy.SYNCED_TO_ANILIST,
+                    onToggle = { s ->
+                        viewModel.updateSyncPolicy {
+                            it.copy(readingStatus = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
+                        }
+                    },
+                )
+                PolicyMatrixRow(
+                    field = "Personal Scores / Ratings",
+                    synced = policy.personalScore == SyncFieldPolicy.SYNCED_TO_ANILIST,
+                    onToggle = { s ->
+                        viewModel.updateSyncPolicy {
+                            it.copy(personalScore = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
+                        }
+                    },
+                )
+                PolicyMatrixRow(
+                    field = "Custom Categories & Tags",
+                    synced = policy.customCategoriesAndTags == SyncFieldPolicy.SYNCED_TO_ANILIST,
+                    onToggle = { s ->
+                        viewModel.updateSyncPolicy {
+                            it.copy(customCategoriesAndTags = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
+                        }
+                    },
+                )
+                PolicyMatrixRow(
+                    field = "Start & Finish Dates",
+                    synced = policy.startAndFinishDates == SyncFieldPolicy.SYNCED_TO_ANILIST,
+                    onToggle = { s ->
+                        viewModel.updateSyncPolicy {
+                            it.copy(startAndFinishDates = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
+                        }
+                    },
+                )
+                PolicyMatrixRow(
+                    field = "Private Notes",
+                    synced = policy.privateNotes == SyncFieldPolicy.SYNCED_TO_ANILIST,
+                    onToggle = { s ->
+                        viewModel.updateSyncPolicy {
+                            it.copy(privateNotes = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
+                        }
+                    },
+                )
+                PolicyMatrixRow(
+                    field = "Detailed Reading History",
+                    synced = false,
+                    lockedLocalOnly = true,
+                    onToggle = {},
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SettingsBackupScreen(
+    onBack: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -217,7 +574,6 @@ fun SettingsScreen(
     var showRestoreDialog by remember { mutableStateOf(false) }
     var restoreOptions by remember { mutableStateOf(SelectiveRestoreOptions()) }
     var pendingRestoreFormat by remember { mutableStateOf(BackupFormat.TACHIBK_GZIP) }
-    var importConflict by remember { mutableStateOf(ConflictResolution.MERGE) }
 
     val exportTachibkLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
@@ -231,393 +587,62 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { viewModel.importBackupFromUri(it, pendingRestoreFormat, restoreOptions) } }
 
-    Scaffold(
-        topBar = { TopAppBar(title = { Text("Settings") }) },
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            state.statusFeedback?.let { feedback ->
-                item {
-                    Card(
-                        shape = MaterialTheme.shapes.medium,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    ) {
-                        Text(
-                            text = feedback,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(14.dp),
+    SettingsCategoryScaffold(
+        kicker = "SETTINGS // ARCHIVE",
+        title = "Backup & Database",
+        feedback = state.statusFeedback,
+        onBack = onBack,
+    ) {
+        item {
+            SettingsMatteGroup(title = "Manual Backup & Restore", icon = Icons.Rounded.Backup) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = { exportTachibkLauncher.launch("tubiac-backup.tachibk") },
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Export .tachibk") }
+                    OutlinedButton(
+                        onClick = { exportZipLauncher.launch("tubiac-backup.zip") },
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Export JSON+ZIP") }
+                }
+                Button(
+                    onClick = { showRestoreDialog = true },
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Import Backup (Selective Restore)") }
+                Text("Auto-Backup Cadence", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AutoBackupFrequency.entries.forEach { freq ->
+                        FilterChip(
+                            selected = settings.autoBackupFrequency == freq,
+                            onClick = { viewModel.updateSettings { it.copy(autoBackupFrequency = freq) } },
+                            label = { Text(freq.name) },
+                            shape = MaterialTheme.shapes.small,
                         )
                     }
                 }
             }
+        }
 
-            // 1. Appearance & Motion
-            item {
-                SettingsSectionCard(title = "Appearance & Motion", icon = Icons.Rounded.Palette) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AppThemeMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = settings.themeMode == mode,
-                                onClick = { viewModel.updateSettings { it.copy(themeMode = mode) } },
-                                label = { Text(mode.name.replace("_", " ")) },
-                            )
-                        }
-                    }
-                    SettingsToggleRow(
-                        title = "Android 12+ Dynamic Color",
-                        subtitle = "Falls back to Tubiac Ink & Vermilion when off",
-                        checked = settings.useDynamicColor,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(useDynamicColor = v) } },
-                    )
-                    SettingsToggleRow(
-                        title = "Cover-Derived Accent on Detail",
-                        subtitle = "Tint Series Detail buttons from artwork palette",
-                        checked = settings.useCoverDerivedDetailAccent,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(useCoverDerivedDetailAccent = v) } },
-                    )
-                    Text("Animation Speed", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AnimationSpeed.entries.forEach { spd ->
-                            FilterChip(
-                                selected = settings.animationSpeed == spd,
-                                onClick = { viewModel.updateSettings { it.copy(animationSpeed = spd) } },
-                                label = { Text(spd.name) },
-                            )
-                        }
-                    }
+        item {
+            SettingsMatteGroup(title = "Database & Storage Maintenance", icon = Icons.Rounded.CleaningServices) {
+                OutlinedButton(
+                    onClick = viewModel::clearCachesAndVacuum,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Rounded.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Clear Image Cache, Cookies & Vacuum SQLite DB")
                 }
-            }
-
-            // 2. Data & Sync Hub (AniList + Granular Local vs Synced Policy Matrix)
-            item {
-                SettingsSectionCard(title = "Data & Sync Hub (AniList)", icon = Icons.Rounded.Sync) {
-                    // AniList Account & Rate-Limit Card
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = state.anilistUser?.name ?: "AniList Not Connected",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = "Rate limit: ${state.rateLimitStatus.remaining}/${state.rateLimitStatus.limit} req/min" +
-                                    (if (state.rateLimitStatus.isDegradedMode) " (Degraded)" else "") +
-                                    " • Queued: ${state.rateLimitStatus.pendingMutationsCount}",
-                                style = MaterialTheme.typography.labelMedium.tabular(),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (state.anilistUser == null) {
-                            Button(onClick = onOpenAniListLogin, shape = CircleShape) { Text("Sign In") }
-                        } else {
-                            OutlinedButton(onClick = viewModel::disconnectAniList, shape = CircleShape) {
-                                Text("Disconnect")
-                            }
-                        }
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = viewModel::syncAniListNow, shape = CircleShape) {
-                            Text("Sync Now")
-                        }
-                        ConflictResolution.entries.forEach { mode ->
-                            FilterChip(
-                                selected = importConflict == mode,
-                                onClick = { importConflict = mode },
-                                label = { Text(mode.name.replace("_", " ")) },
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
-                    Text("Local-Only vs. Synced Policy Matrix", style = MaterialTheme.typography.titleSmall)
-
-                    val policy = settings.syncPolicy
-                    PolicyMatrixRow(
-                        field = "Chapter Reading Progress",
-                        synced = policy.chapterProgress == SyncFieldPolicy.SYNCED_TO_ANILIST,
-                        onToggle = { s ->
-                            viewModel.updateSyncPolicy {
-                                it.copy(chapterProgress = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
-                            }
-                        },
-                    )
-                    PolicyMatrixRow(
-                        field = "Reading Status",
-                        synced = policy.readingStatus == SyncFieldPolicy.SYNCED_TO_ANILIST,
-                        onToggle = { s ->
-                            viewModel.updateSyncPolicy {
-                                it.copy(readingStatus = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
-                            }
-                        },
-                    )
-                    PolicyMatrixRow(
-                        field = "Personal Scores / Ratings",
-                        synced = policy.personalScore == SyncFieldPolicy.SYNCED_TO_ANILIST,
-                        onToggle = { s ->
-                            viewModel.updateSyncPolicy {
-                                it.copy(personalScore = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
-                            }
-                        },
-                    )
-                    PolicyMatrixRow(
-                        field = "Custom Categories & Tags",
-                        synced = policy.customCategoriesAndTags == SyncFieldPolicy.SYNCED_TO_ANILIST,
-                        onToggle = { s ->
-                            viewModel.updateSyncPolicy {
-                                it.copy(customCategoriesAndTags = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
-                            }
-                        },
-                    )
-                    PolicyMatrixRow(
-                        field = "Start & Finish Dates",
-                        synced = policy.startAndFinishDates == SyncFieldPolicy.SYNCED_TO_ANILIST,
-                        onToggle = { s ->
-                            viewModel.updateSyncPolicy {
-                                it.copy(startAndFinishDates = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
-                            }
-                        },
-                    )
-                    PolicyMatrixRow(
-                        field = "Private Notes",
-                        synced = policy.privateNotes == SyncFieldPolicy.SYNCED_TO_ANILIST,
-                        onToggle = { s ->
-                            viewModel.updateSyncPolicy {
-                                it.copy(privateNotes = if (s) SyncFieldPolicy.SYNCED_TO_ANILIST else SyncFieldPolicy.LOCAL_ONLY)
-                            }
-                        },
-                    )
-                    PolicyMatrixRow(
-                        field = "Detailed Reading History",
-                        synced = false,
-                        lockedLocalOnly = true,
-                        onToggle = {},
-                    )
-                }
-            }
-
-            // 3. Backup, Restore & Database Maintenance
-            item {
-                SettingsSectionCard(title = "Backup, Restore & Database", icon = Icons.Rounded.Backup) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
-                            onClick = { exportTachibkLauncher.launch("tubiac-backup.tachibk") },
-                            shape = CircleShape,
-                        ) { Text("Export .tachibk") }
-                        OutlinedButton(
-                            onClick = { exportZipLauncher.launch("tubiac-backup.zip") },
-                            shape = CircleShape,
-                        ) { Text("Export JSON+ZIP") }
-                    }
-                    FilledTonalButton(
-                        onClick = { showRestoreDialog = true },
-                        shape = CircleShape,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Import Backup (Selective Restore)") }
-
-                    Text("Auto-Backup Schedule", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AutoBackupFrequency.entries.forEach { freq ->
-                            FilterChip(
-                                selected = settings.autoBackupFrequency == freq,
-                                onClick = { viewModel.updateSettings { it.copy(autoBackupFrequency = freq) } },
-                                label = { Text(freq.name) },
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = viewModel::clearCachesAndVacuum, shape = CircleShape) {
-                            Icon(Icons.Rounded.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Clear Cache & Vacuum DB")
-                        }
-                        OutlinedButton(onClick = viewModel::cleanOrphanedDownloads, shape = CircleShape) {
-                            Text("Clean Orphans")
-                        }
-                    }
-                }
-            }
-
-            // 4. Downloads & Local Source
-            item {
-                SettingsSectionCard(title = "Downloads & Local Source", icon = Icons.Rounded.Download) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = onOpenDownloads, shape = CircleShape) {
-                            Text("Open Download Queue")
-                        }
-                        OutlinedButton(onClick = onPickLocalFolder, shape = CircleShape) {
-                            Text("Select Local Folder")
-                        }
-                    }
-                    Text(
-                        text = "Concurrent page downloads: ${settings.concurrentPageDownloads}",
-                        style = MaterialTheme.typography.labelLarge.tabular(),
-                    )
-                    Slider(
-                        value = settings.concurrentPageDownloads.toFloat(),
-                        onValueChange = { v -> viewModel.updateSettings { it.copy(concurrentPageDownloads = v.toInt()) } },
-                        valueRange = 1f..10f,
-                        steps = 8,
-                    )
-                    SettingsToggleRow(
-                        title = "Wi-Fi Only Downloads",
-                        subtitle = "Pause queue on metered cellular networks",
-                        checked = settings.wifiOnlyDownloads,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(wifiOnlyDownloads = v) } },
-                    )
-                    SettingsToggleRow(
-                        title = "Auto-Delete Read Chapters",
-                        subtitle = "Free space automatically once a chapter is completed",
-                        checked = settings.autoDeleteReadChapters,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoDeleteReadChapters = v) } },
-                    )
-                    Text(
-                        text = "Download Ahead: ${settings.downloadAheadCount} chapter(s)",
-                        style = MaterialTheme.typography.labelLarge.tabular(),
-                    )
-                    Slider(
-                        value = settings.downloadAheadCount.toFloat(),
-                        onValueChange = { v -> viewModel.updateSettings { it.copy(downloadAheadCount = v.toInt()) } },
-                        valueRange = 0f..5f,
-                        steps = 4,
-                    )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DownloadStorageFormat.entries.forEach { fmt ->
-                            FilterChip(
-                                selected = settings.downloadStorageFormat == fmt,
-                                onClick = { viewModel.updateSettings { it.copy(downloadStorageFormat = fmt) } },
-                                label = { Text(fmt.name.replace("_", " ")) },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 5. Reader & Shelf Defaults
-            item {
-                SettingsSectionCard(title = "Reader & Shelf Defaults", icon = Icons.Rounded.Sync) {
-                    SettingsToggleRow(
-                        title = "Smart Reader Auto-Detection",
-                        subtitle = "Webtoon for Manhwa/tall strips, RTL for Manga",
-                        checked = settings.readerPreferences.smartAutoDetect,
-                        onCheckedChange = { v ->
-                            viewModel.updateSettings {
-                                it.copy(readerPreferences = it.readerPreferences.copy(smartAutoDetect = v))
-                            }
-                        },
-                    )
-                    SettingsToggleRow(
-                        title = "Volume Key Page Navigation",
-                        subtitle = "Turn pages using hardware volume rocker",
-                        checked = settings.readerPreferences.volumeKeyNavigation,
-                        onCheckedChange = { v ->
-                            viewModel.updateSettings {
-                                it.copy(readerPreferences = it.readerPreferences.copy(volumeKeyNavigation = v))
-                            }
-                        },
-                    )
-                    SettingsToggleRow(
-                        title = "Skip Completed Series on Library Update",
-                        subtitle = "Faster background updates with fewer requests",
-                        checked = settings.skipCompletedOnUpdate,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(skipCompletedOnUpdate = v) } },
-                    )
-                    Text("Tap Zone Preset", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TapZonePreset.entries.forEach { preset ->
-                            FilterChip(
-                                selected = settings.readerPreferences.tapZonePreset == preset,
-                                onClick = {
-                                    viewModel.updateSettings {
-                                        it.copy(readerPreferences = it.readerPreferences.copy(tapZonePreset = preset))
-                                    }
-                                },
-                                label = { Text(preset.name.replace("_", " ")) },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 6. Privacy & Security (Incognito, Biometric/PIN, FLAG_SECURE, DoH)
-            item {
-                SettingsSectionCard(title = "Privacy & Security", icon = Icons.Rounded.Security) {
-                    SettingsToggleRow(
-                        title = "Incognito Mode",
-                        subtitle = "Never record history or push AniList sync updates",
-                        checked = settings.incognitoMode,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(incognitoMode = v) } },
-                    )
-                    SettingsToggleRow(
-                        title = "Biometric / Device PIN App Lock",
-                        subtitle = "Require authentication when launching Tubiac",
-                        checked = settings.biometricLockEnabled,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(biometricLockEnabled = v) } },
-                    )
-                    SettingsToggleRow(
-                        title = "Secure Screen (FLAG_SECURE)",
-                        subtitle = "Block screenshots and hide app preview in recents",
-                        checked = settings.secureScreenEnabled,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(secureScreenEnabled = v) } },
-                    )
-                    SettingsToggleRow(
-                        title = "Spoof X-Requested-With Header",
-                        subtitle = "Improves extension and Cloudflare WebView compatibility",
-                        checked = settings.spoofXRequestedWith,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(spoofXRequestedWith = v) } },
-                    )
-                    SettingsToggleRow(
-                        title = "Show 18+ / NSFW Extensions",
-                        subtitle = "Disabled by default in Browse > Extensions",
-                        checked = settings.showNsfwExtensions,
-                        onCheckedChange = { v -> viewModel.updateSettings { it.copy(showNsfwExtensions = v) } },
-                    )
-                    Text("DNS-over-HTTPS (DoH)", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        DoHProvider.entries.forEach { provider ->
-                            FilterChip(
-                                selected = settings.dohProvider == provider,
-                                onClick = { viewModel.updateSettings { it.copy(dohProvider = provider) } },
-                                label = { Text(provider.label) },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 7. About & Disclaimer
-            item {
-                val context = LocalContext.current
-                val versionLabel = remember(context) {
-                    runCatching {
-                        val info = context.packageManager.getPackageInfo(context.packageName, 0)
-                        val vName = info.versionName ?: "0.1.0-alpha"
-                        val vCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                            info.longVersionCode
-                        } else {
-                            @Suppress("DEPRECATION")
-                            info.versionCode.toLong()
-                        }
-                        "Tubiac $vName (Build $vCode • ${context.packageName})"
-                    }.getOrDefault("Tubiac (${context.packageName})")
-                }
-                SettingsSectionCard(title = "About Tubiac", icon = Icons.Rounded.Info) {
-                    Text(versionLabel, style = MaterialTheme.typography.titleSmall.tabular())
-                    Text(
-                        text = "Tubiac is strictly an open-source reader application and AniList tracking client licensed under GNU GPLv3. It does not host, distribute, or bundle any copyrighted media content or third-party extension code.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                OutlinedButton(
+                    onClick = viewModel::cleanOrphanedDownloads,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Remove Empty Orphaned Download Folders")
                 }
             }
         }
@@ -634,11 +659,13 @@ fun SettingsScreen(
                             selected = pendingRestoreFormat == BackupFormat.TACHIBK_GZIP,
                             onClick = { pendingRestoreFormat = BackupFormat.TACHIBK_GZIP },
                             label = { Text(".tachibk") },
+                            shape = MaterialTheme.shapes.small,
                         )
                         FilterChip(
                             selected = pendingRestoreFormat == BackupFormat.JSON_ZIP,
                             onClick = { pendingRestoreFormat = BackupFormat.JSON_ZIP },
                             label = { Text("JSON+ZIP") },
+                            shape = MaterialTheme.shapes.small,
                         )
                     }
                     RestoreCheckbox("Library & Chapter states", restoreOptions.restoreLibraryAndChapters) {
@@ -674,24 +701,337 @@ fun SettingsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SettingsSectionCard(
+fun SettingsDownloadsScreen(
+    onBack: () -> Unit,
+    onOpenDownloadQueue: () -> Unit,
+    onPickLocalFolder: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = state.settings
+
+    SettingsCategoryScaffold(
+        kicker = "SETTINGS // OFFLINE",
+        title = "Downloads & Local Storage",
+        feedback = state.statusFeedback,
+        onBack = onBack,
+    ) {
+        item {
+            SettingsMatteGroup(title = "Queue & Local Repository", icon = Icons.Rounded.Download) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = onOpenDownloadQueue,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Download Queue") }
+                    OutlinedButton(
+                        onClick = onPickLocalFolder,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Local Folder") }
+                }
+                Text(
+                    text = if (settings.localSourceTreeUri.isNullOrBlank()) {
+                        "Local folder: Not configured"
+                    } else {
+                        "Local folder: Linked (SAF persistent)"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
+            SettingsMatteGroup(title = "Transfer & Archiving Behavior", icon = Icons.Rounded.Tune) {
+                Text(
+                    text = "Concurrent page downloads: ${settings.concurrentPageDownloads}",
+                    style = MaterialTheme.typography.labelLarge.tabular(),
+                )
+                Slider(
+                    value = settings.concurrentPageDownloads.toFloat(),
+                    onValueChange = { v -> viewModel.updateSettings { it.copy(concurrentPageDownloads = v.toInt()) } },
+                    valueRange = 1f..10f,
+                    steps = 8,
+                )
+                SettingsToggleRow(
+                    title = "Wi-Fi Only Downloads",
+                    subtitle = "Pause queue on metered cellular networks",
+                    checked = settings.wifiOnlyDownloads,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(wifiOnlyDownloads = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Auto-Delete Read Chapters",
+                    subtitle = "Free space automatically once a chapter is completed",
+                    checked = settings.autoDeleteReadChapters,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoDeleteReadChapters = v) } },
+                )
+                Text(
+                    text = "Download Ahead: ${settings.downloadAheadCount} chapter(s)",
+                    style = MaterialTheme.typography.labelLarge.tabular(),
+                )
+                Slider(
+                    value = settings.downloadAheadCount.toFloat(),
+                    onValueChange = { v -> viewModel.updateSettings { it.copy(downloadAheadCount = v.toInt()) } },
+                    valueRange = 0f..5f,
+                    steps = 4,
+                )
+                Text("Archive Storage Format", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DownloadStorageFormat.entries.forEach { fmt ->
+                        FilterChip(
+                            selected = settings.downloadStorageFormat == fmt,
+                            onClick = { viewModel.updateSettings { it.copy(downloadStorageFormat = fmt) } },
+                            label = { Text(fmt.name.replace("_", " ")) },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SettingsReaderScreen(
+    onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = state.settings
+
+    SettingsCategoryScaffold(
+        kicker = "SETTINGS // VIEWER",
+        title = "Reader & Shelf Defaults",
+        feedback = state.statusFeedback,
+        onBack = onBack,
+    ) {
+        item {
+            SettingsMatteGroup(title = "Reader Engine Defaults", icon = Icons.Rounded.Tune) {
+                SettingsToggleRow(
+                    title = "Smart Reader Auto-Detection",
+                    subtitle = "Webtoon for Manhwa/tall strips, RTL for Manga",
+                    checked = settings.readerPreferences.smartAutoDetect,
+                    onCheckedChange = { v ->
+                        viewModel.updateSettings {
+                            it.copy(readerPreferences = it.readerPreferences.copy(smartAutoDetect = v))
+                        }
+                    },
+                )
+                SettingsToggleRow(
+                    title = "Volume Key Page Navigation",
+                    subtitle = "Turn pages using hardware volume rocker",
+                    checked = settings.readerPreferences.volumeKeyNavigation,
+                    onCheckedChange = { v ->
+                        viewModel.updateSettings {
+                            it.copy(readerPreferences = it.readerPreferences.copy(volumeKeyNavigation = v))
+                        }
+                    },
+                )
+                Text("Tap Zone Preset", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TapZonePreset.entries.forEach { preset ->
+                        FilterChip(
+                            selected = settings.readerPreferences.tapZonePreset == preset,
+                            onClick = {
+                                viewModel.updateSettings {
+                                    it.copy(readerPreferences = it.readerPreferences.copy(tapZonePreset = preset))
+                                }
+                            },
+                            label = { Text(preset.name.replace("_", " ")) },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            SettingsMatteGroup(title = "Shelf Updates & Badges", icon = Icons.Rounded.Sync) {
+                SettingsToggleRow(
+                    title = "Skip Completed Series on Library Update",
+                    subtitle = "Faster background updates with fewer requests",
+                    checked = settings.skipCompletedOnUpdate,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(skipCompletedOnUpdate = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Show Unread Counter Badges",
+                    subtitle = "Display unread count badge on Shelf cover cards",
+                    checked = settings.showUnreadBadges,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(showUnreadBadges = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Show Downloaded Chapter Badges",
+                    subtitle = "Display offline count badge on Shelf cover cards",
+                    checked = settings.showDownloadBadges,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(showDownloadBadges = v) } },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SettingsPrivacyScreen(
+    onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = state.settings
+    var uaInput by remember(settings.customUserAgent) { mutableStateOf(settings.customUserAgent) }
+
+    SettingsCategoryScaffold(
+        kicker = "SETTINGS // PROTECTION",
+        title = "Privacy & Network",
+        feedback = state.statusFeedback,
+        onBack = onBack,
+    ) {
+        item {
+            SettingsMatteGroup(title = "Privacy & Device Lock", icon = Icons.Rounded.Security) {
+                SettingsToggleRow(
+                    title = "Incognito Mode",
+                    subtitle = "Never record history or push AniList sync updates",
+                    checked = settings.incognitoMode,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(incognitoMode = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Biometric / Device PIN App Lock",
+                    subtitle = "Require authentication when launching Tubiac",
+                    checked = settings.biometricLockEnabled,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(biometricLockEnabled = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Secure Screen (FLAG_SECURE)",
+                    subtitle = "Block screenshots and hide app preview in recents",
+                    checked = settings.secureScreenEnabled,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(secureScreenEnabled = v) } },
+                )
+                SettingsToggleRow(
+                    title = "Show 18+ / NSFW Extensions",
+                    subtitle = "Disabled by default in Browse > Extensions",
+                    checked = settings.showNsfwExtensions,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(showNsfwExtensions = v) } },
+                )
+            }
+        }
+
+        item {
+            SettingsMatteGroup(title = "Networking, Headers & DoH", icon = Icons.Rounded.Lock) {
+                SettingsToggleRow(
+                    title = "Spoof X-Requested-With Header",
+                    subtitle = "Improves extension and Cloudflare WebView compatibility",
+                    checked = settings.spoofXRequestedWith,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(spoofXRequestedWith = v) } },
+                )
+                Text("DNS-over-HTTPS (DoH)", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    DoHProvider.entries.forEach { provider ->
+                        FilterChip(
+                            selected = settings.dohProvider == provider,
+                            onClick = { viewModel.updateSettings { it.copy(dohProvider = provider) } },
+                            label = { Text(provider.label) },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = uaInput,
+                    onValueChange = { uaInput = it },
+                    label = { Text("Custom User-Agent") },
+                    minLines = 2,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = {
+                            if (uaInput.isNotBlank()) {
+                                viewModel.updateSettings { it.copy(customUserAgent = uaInput.trim()) }
+                            }
+                        },
+                        shape = MaterialTheme.shapes.small,
+                    ) { Text("Save User-Agent") }
+                    OutlinedButton(
+                        onClick = {
+                            uaInput = AppSettings.DEFAULT_USER_AGENT
+                            viewModel.updateSettings { it.copy(customUserAgent = AppSettings.DEFAULT_USER_AGENT) }
+                        },
+                        shape = MaterialTheme.shapes.small,
+                    ) { Text("Reset Default") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SettingsCategoryScaffold(
+    kicker: String,
     title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    feedback: String?,
+    onBack: () -> Unit,
+    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
+) {
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = kicker,
+                    title = title,
+                    onBack = onBack,
+                )
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                feedback?.let { msg ->
+                    item {
+                        MatteCard(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                        ) {
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(14.dp),
+                            )
+                        }
+                    }
+                }
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SettingsMatteGroup(
+    title: String,
+    icon: ImageVector,
     content: @Composable () -> Unit,
 ) {
-    Card(
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
+    MatteCard {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
                 Text(title, style = MaterialTheme.typography.titleMedium)
             }
             content()

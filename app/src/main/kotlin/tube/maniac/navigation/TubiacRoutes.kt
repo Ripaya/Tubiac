@@ -7,6 +7,14 @@ import kotlinx.serialization.Serializable
 @Serializable data object BrowseRoute
 @Serializable data object SettingsRoute
 
+@Serializable data object SettingsAppearanceRoute
+@Serializable data object SettingsSyncRoute
+@Serializable data object SettingsBackupRoute
+@Serializable data object SettingsDownloadsRoute
+@Serializable data object SettingsReaderRoute
+@Serializable data object SettingsPrivacyRoute
+@Serializable data object SettingsAboutRoute
+
 @Serializable data object HistoryRoute
 @Serializable data object DownloadsRoute
 @Serializable data object UpdateErrorsRoute

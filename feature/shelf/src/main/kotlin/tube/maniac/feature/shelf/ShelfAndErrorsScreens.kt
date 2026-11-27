@@ -1,6 +1,8 @@
 package tube.maniac.feature.shelf
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,9 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Category
@@ -34,8 +34,6 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ViewAgenda
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -45,25 +43,22 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -87,8 +82,12 @@ import tube.maniac.core.database.entity.SeriesCategoryCrossRef
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.designsystem.components.ErrorRecoveryCard
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.MatteCard
+import tube.maniac.core.designsystem.components.MatteSegmentedTabs
 import tube.maniac.core.designsystem.components.SeriesCoverCard
 import tube.maniac.core.designsystem.components.TabularBadge
+import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.model.Category
 import tube.maniac.core.model.ReadingStatus
 import tube.maniac.core.model.Series
@@ -310,258 +309,256 @@ fun ShelfScreen(
     var showAddCategoryDialog by remember { mutableStateOf(false) }
     val selectionActive = state.selectedSeriesIds.isNotEmpty()
 
-    Scaffold(
-        topBar = {
-            if (selectionActive) {
-                TopAppBar(
-                    title = { Text("${state.selectedSeriesIds.size} selected") },
-                    navigationIcon = {
-                        IconButton(onClick = viewModel::clearSelection) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Cancel selection")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { showCategorySheet = true }) {
-                            Icon(Icons.Rounded.Category, contentDescription = "Assign category")
-                        }
-                        IconButton(onClick = { viewModel.markSelectedRead(true) }) {
-                            Icon(Icons.Rounded.DoneAll, contentDescription = "Mark read")
-                        }
-                        IconButton(onClick = viewModel::removeSelectedFromLibrary) {
-                            Icon(Icons.Rounded.Delete, contentDescription = "Remove from Shelf")
-                        }
-                    },
-                )
-            } else {
-                TopAppBar(
-                    title = { Text("Shelf") },
-                    actions = {
-                        if (state.updateErrorsCount > 0) {
-                            IconButton(onClick = onOpenUpdateErrors) {
-                                Icon(
-                                    Icons.Rounded.Warning,
-                                    contentDescription = "Update errors",
-                                    tint = MaterialTheme.colorScheme.error,
-                                )
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                if (selectionActive) {
+                    TubiacTopBar(
+                        kicker = "BATCH EDIT",
+                        title = "${state.selectedSeriesIds.size} Selected",
+                        actions = {
+                            IconButton(onClick = viewModel::clearSelection) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Cancel selection")
                             }
-                        }
-                        IconButton(onClick = { showCategorySheet = true }) {
-                            Icon(Icons.Rounded.Category, contentDescription = "Manage categories")
-                        }
-                        IconButton(onClick = viewModel::cycleDisplayMode) {
-                            val icon = when (state.displayMode) {
-                                ShelfDisplayMode.GRID -> Icons.Rounded.GridView
-                                ShelfDisplayMode.LIST -> Icons.AutoMirrored.Rounded.ViewList
-                                ShelfDisplayMode.COMPACT -> Icons.Rounded.ViewAgenda
+                            IconButton(onClick = { showCategorySheet = true }) {
+                                Icon(Icons.Rounded.Category, contentDescription = "Assign category")
                             }
-                            Icon(icon, contentDescription = "Change layout")
-                        }
+                            IconButton(onClick = { viewModel.markSelectedRead(true) }) {
+                                Icon(Icons.Rounded.DoneAll, contentDescription = "Mark read")
+                            }
+                            IconButton(onClick = viewModel::removeSelectedFromLibrary) {
+                                Icon(Icons.Rounded.Delete, contentDescription = "Remove from Shelf")
+                            }
+                        },
+                    )
+                } else {
+                    TubiacTopBar(
+                        kicker = "COLLECTION",
+                        title = "Shelf",
+                        actions = {
+                            if (state.updateErrorsCount > 0) {
+                                IconButton(onClick = onOpenUpdateErrors) {
+                                    Icon(
+                                        Icons.Rounded.Warning,
+                                        contentDescription = "Update errors",
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { showCategorySheet = true }) {
+                                Icon(Icons.Rounded.Category, contentDescription = "Manage categories")
+                            }
+                            IconButton(onClick = viewModel::cycleDisplayMode) {
+                                val icon = when (state.displayMode) {
+                                    ShelfDisplayMode.GRID -> Icons.Rounded.GridView
+                                    ShelfDisplayMode.LIST -> Icons.AutoMirrored.Rounded.ViewList
+                                    ShelfDisplayMode.COMPACT -> Icons.Rounded.ViewAgenda
+                                }
+                                Icon(icon, contentDescription = "Change layout")
+                            }
+                        },
+                    )
+                }
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                MatteSegmentedTabs(
+                    options = listOf("Categories", "AniList Lists"),
+                    selectedIndex = if (state.groupingMode == ShelfGroupingMode.CATEGORIES) 0 else 1,
+                    onSelect = { idx ->
+                        viewModel.setGroupingMode(
+                            if (idx == 0) ShelfGroupingMode.CATEGORIES else ShelfGroupingMode.ANILIST_STATUS,
+                        )
                     },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            // Grouping mode: Categories vs AniList Lists
-            SingleChoiceSegmentedButtonRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-            ) {
-                SegmentedButton(
-                    selected = state.groupingMode == ShelfGroupingMode.CATEGORIES,
-                    onClick = { viewModel.setGroupingMode(ShelfGroupingMode.CATEGORIES) },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                ) { Text("Categories") }
-                SegmentedButton(
-                    selected = state.groupingMode == ShelfGroupingMode.ANILIST_STATUS,
-                    onClick = { viewModel.setGroupingMode(ShelfGroupingMode.ANILIST_STATUS) },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2),
-                ) { Text("AniList Lists") }
-            }
 
-            // Tab Strip
-            if (state.groupingMode == ShelfGroupingMode.CATEGORIES) {
-                val tabs = listOf<Category?>(null) + state.categories
-                val selectedIdx = tabs.indexOfFirst { it?.id == state.selectedCategoryId }.coerceAtLeast(0)
-                PrimaryScrollableTabRow(selectedTabIndex = selectedIdx, edgePadding = 16.dp) {
-                    tabs.forEach { cat ->
-                        Tab(
-                            selected = cat?.id == state.selectedCategoryId,
-                            onClick = { viewModel.selectCategory(cat?.id) },
-                            text = { Text(cat?.name ?: "All") },
-                        )
+                // Tab Strip
+                if (state.groupingMode == ShelfGroupingMode.CATEGORIES) {
+                    val tabs = listOf<Category?>(null) + state.categories
+                    val selectedIdx = tabs.indexOfFirst { it?.id == state.selectedCategoryId }.coerceAtLeast(0)
+                    PrimaryScrollableTabRow(
+                        selectedTabIndex = selectedIdx,
+                        edgePadding = 16.dp,
+                        containerColor = Color.Transparent,
+                    ) {
+                        tabs.forEach { cat ->
+                            Tab(
+                                selected = cat?.id == state.selectedCategoryId,
+                                onClick = { viewModel.selectCategory(cat?.id) },
+                                text = { Text(cat?.name ?: "All") },
+                            )
+                        }
                     }
-                }
-            } else {
-                val statuses = ReadingStatus.entries
-                val selectedIdx = statuses.indexOf(state.selectedStatus).coerceAtLeast(0)
-                PrimaryScrollableTabRow(selectedTabIndex = selectedIdx, edgePadding = 16.dp) {
-                    statuses.forEach { status ->
-                        Tab(
-                            selected = status == state.selectedStatus,
-                            onClick = { viewModel.selectStatus(status) },
-                            text = {
-                                Text(
-                                    status.name.lowercase().replaceFirstChar { it.uppercase() }
-                                        .replace("Current", "Reading"),
-                                )
-                            },
-                        )
-                    }
-                }
-            }
-
-            // Search + Local/AniList/Tag chips
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = viewModel::updateQuery,
-                placeholder = { Text("Filter Shelf") },
-                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                singleLine = true,
-                shape = CircleShape,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(ShelfSyncFilter.entries) { filter ->
-                    FilterChip(
-                        selected = state.syncFilter == filter,
-                        onClick = { viewModel.setSyncFilter(filter) },
-                        label = {
-                            Text(
-                                when (filter) {
-                                    ShelfSyncFilter.ALL -> "All"
-                                    ShelfSyncFilter.LOCAL_ONLY -> "Local-Only"
-                                    ShelfSyncFilter.ANILIST_SYNCED -> "AniList Synced"
+                } else {
+                    val statuses = ReadingStatus.entries
+                    val selectedIdx = statuses.indexOf(state.selectedStatus).coerceAtLeast(0)
+                    PrimaryScrollableTabRow(
+                        selectedTabIndex = selectedIdx,
+                        edgePadding = 16.dp,
+                        containerColor = Color.Transparent,
+                    ) {
+                        statuses.forEach { status ->
+                            Tab(
+                                selected = status == state.selectedStatus,
+                                onClick = { viewModel.selectStatus(status) },
+                                text = {
+                                    Text(
+                                        status.name.lowercase().replaceFirstChar { it.uppercase() }
+                                            .replace("Current", "Reading"),
+                                    )
                                 },
                             )
-                        },
-                        shape = MaterialTheme.shapes.small,
-                    )
-                }
-                items(state.tags, key = { it.id }) { tag ->
-                    FilterChip(
-                        selected = state.selectedTagId == tag.id,
-                        onClick = {
-                            viewModel.selectTag(if (state.selectedTagId == tag.id) null else tag.id)
-                        },
-                        label = { Text("#${tag.name}") },
-                        shape = MaterialTheme.shapes.small,
-                    )
-                }
-            }
-
-            if (state.series.isEmpty()) {
-                ExpressiveEmptyState(
-                    icon = Icons.Rounded.LibraryBooks,
-                    title = "Your Shelf is empty",
-                    message = "Add manga, manhwa, or local CBZ folders from Browse or import your AniList library.",
-                    actionLabel = "Browse Sources",
-                    onAction = onOpenBrowse,
-                )
-            } else {
-                when (state.displayMode) {
-                    ShelfDisplayMode.GRID -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = 114.dp),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            items(state.series, key = { it.id }) { series ->
-                                SeriesCoverCard(
-                                    title = series.displayTitle,
-                                    coverUrl = series.displayCoverUrl,
-                                    unreadCount = series.unreadCount,
-                                    downloadedCount = series.downloadedCount,
-                                    showUnreadBadge = state.showUnreadBadges,
-                                    showDownloadBadge = state.showDownloadBadges,
-                                    selected = series.id in state.selectedSeriesIds,
-                                    onClick = {
-                                        if (selectionActive) viewModel.toggleSelection(series.id)
-                                        else onOpenSeriesDetail(series.id)
-                                    },
-                                    onLongClick = { viewModel.toggleSelection(series.id) },
-                                )
-                            }
                         }
                     }
+                }
 
-                    ShelfDisplayMode.LIST, ShelfDisplayMode.COMPACT -> {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            items(state.series, key = { it.id }) { series ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(MaterialTheme.shapes.medium)
-                                        .combinedClickable(
-                                            onClick = {
-                                                if (selectionActive) viewModel.toggleSelection(series.id)
-                                                else onOpenSeriesDetail(series.id)
-                                            },
-                                            onLongClick = { viewModel.toggleSelection(series.id) },
-                                        ),
-                                    shape = MaterialTheme.shapes.medium,
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (series.id in state.selectedSeriesIds) {
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceContainerLow
+                // Search + Local/AniList/Tag chips
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = viewModel::updateQuery,
+                    placeholder = { Text("Filter Shelf") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(ShelfSyncFilter.entries) { filter ->
+                        FilterChip(
+                            selected = state.syncFilter == filter,
+                            onClick = { viewModel.setSyncFilter(filter) },
+                            label = {
+                                Text(
+                                    when (filter) {
+                                        ShelfSyncFilter.ALL -> "All"
+                                        ShelfSyncFilter.LOCAL_ONLY -> "Local-Only"
+                                        ShelfSyncFilter.ANILIST_SYNCED -> "AniList Synced"
+                                    },
+                                )
+                            },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                    items(state.tags, key = { it.id }) { tag ->
+                        FilterChip(
+                            selected = state.selectedTagId == tag.id,
+                            onClick = {
+                                viewModel.selectTag(if (state.selectedTagId == tag.id) null else tag.id)
+                            },
+                            label = { Text("#${tag.name}") },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+
+                if (state.series.isEmpty()) {
+                    ExpressiveEmptyState(
+                        icon = Icons.Rounded.LibraryBooks,
+                        title = "Your Shelf is empty",
+                        message = "Add manga, manhwa, or local CBZ folders from Browse or import your AniList library.",
+                        actionLabel = "Browse Sources",
+                        onAction = onOpenBrowse,
+                    )
+                } else {
+                    when (state.displayMode) {
+                        ShelfDisplayMode.GRID -> {
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(minSize = 114.dp),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                items(state.series, key = { it.id }) { series ->
+                                    SeriesCoverCard(
+                                        title = series.displayTitle,
+                                        coverUrl = series.displayCoverUrl,
+                                        unreadCount = series.unreadCount,
+                                        downloadedCount = series.downloadedCount,
+                                        showUnreadBadge = state.showUnreadBadges,
+                                        showDownloadBadge = state.showDownloadBadges,
+                                        selected = series.id in state.selectedSeriesIds,
+                                        onClick = {
+                                            if (selectionActive) viewModel.toggleSelection(series.id)
+                                            else onOpenSeriesDetail(series.id)
                                         },
-                                    ),
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        onLongClick = { viewModel.toggleSelection(series.id) },
+                                    )
+                                }
+                            }
+                        }
+
+                        ShelfDisplayMode.LIST, ShelfDisplayMode.COMPACT -> {
+                            LazyColumn(
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                items(state.series, key = { it.id }) { series ->
+                                    MatteCard(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        selected = series.id in state.selectedSeriesIds,
+                                        onClick = {
+                                            if (selectionActive) viewModel.toggleSelection(series.id)
+                                            else onOpenSeriesDetail(series.id)
+                                        },
+                                        onLongClick = { viewModel.toggleSelection(series.id) },
                                     ) {
-                                        AsyncImage(
-                                            model = series.displayCoverUrl,
-                                            contentDescription = series.displayTitle,
-                                            contentScale = ContentScale.Crop,
+                                        Row(
                                             modifier = Modifier
-                                                .size(
-                                                    width = if (state.displayMode == ShelfDisplayMode.COMPACT) 40.dp else 54.dp,
-                                                    height = if (state.displayMode == ShelfDisplayMode.COMPACT) 56.dp else 76.dp,
+                                                .fillMaxWidth()
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            AsyncImage(
+                                                model = series.displayCoverUrl,
+                                                contentDescription = series.displayTitle,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .size(
+                                                        width = if (state.displayMode == ShelfDisplayMode.COMPACT) 40.dp else 54.dp,
+                                                        height = if (state.displayMode == ShelfDisplayMode.COMPACT) 56.dp else 76.dp,
+                                                    )
+                                                    .clip(MaterialTheme.shapes.extraSmall)
+                                                    .border(
+                                                        1.dp,
+                                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                                                        MaterialTheme.shapes.extraSmall,
+                                                    ),
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = series.displayTitle,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
                                                 )
-                                                .clip(MaterialTheme.shapes.extraSmall),
-                                        )
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = series.displayTitle,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            Text(
-                                                text = series.author ?: series.format.name.lowercase()
-                                                    .replaceFirstChar { it.uppercase() },
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                            )
-                                        }
-                                        if (state.showUnreadBadges && series.unreadCount > 0) {
-                                            TabularBadge(
-                                                text = series.unreadCount.toString(),
-                                                containerColor = MaterialTheme.colorScheme.primary,
-                                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                            )
+                                                Text(
+                                                    text = series.author ?: series.format.name.lowercase()
+                                                        .replaceFirstChar { it.uppercase() },
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                )
+                                            }
+                                            if (state.showUnreadBadges && series.unreadCount > 0) {
+                                                TabularBadge(
+                                                    text = series.unreadCount.toString(),
+                                                    containerColor = MaterialTheme.colorScheme.primary,
+                                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -600,7 +597,7 @@ fun ShelfScreen(
                     }
                 }
                 state.categories.forEach { cat ->
-                    Card(
+                    MatteCard(
                         onClick = {
                             if (selectionActive) {
                                 viewModel.assignSelectedToCategory(cat.id)
@@ -610,7 +607,6 @@ fun ShelfScreen(
                                 showCategorySheet = false
                             }
                         },
-                        shape = MaterialTheme.shapes.medium,
                     ) {
                         Row(
                             modifier = Modifier
@@ -703,50 +699,50 @@ fun UpdateErrorsScreen(
 ) {
     val errors by viewModel.errors.collectAsStateWithLifecycle()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Update Errors") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "DIAGNOSTICS",
+                    title = "Update Errors",
+                    onBack = onBack,
+                    actions = {
+                        if (errors.isNotEmpty()) {
+                            TextButton(onClick = viewModel::clearAll) { Text("Clear all") }
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            if (errors.isEmpty()) {
+                ExpressiveEmptyState(
+                    icon = Icons.Rounded.DoneAll,
+                    title = "All sources healthy",
+                    message = "No failed background updates right now.",
+                    modifier = Modifier.padding(padding),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(errors, key = { it.id }) { error ->
+                        ErrorRecoveryCard(
+                            title = "${error.seriesTitle} • ${error.sourceName}",
+                            reason = if (error.isCloudflare) {
+                                "Cloudflare challenge paused updates. Open in WebView to clear."
+                            } else {
+                                error.reason
+                            },
+                            onRetry = { viewModel.dismissError(error.seriesId) },
+                            onOpenWebView = { onOpenWebView(error.seriesUrl) },
+                            onMigrateSource = { onMigrateSource(error.seriesId) },
+                        )
                     }
-                },
-                actions = {
-                    if (errors.isNotEmpty()) {
-                        TextButton(onClick = viewModel::clearAll) { Text("Clear all") }
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        if (errors.isEmpty()) {
-            ExpressiveEmptyState(
-                icon = Icons.Rounded.DoneAll,
-                title = "All sources healthy",
-                message = "No failed background updates right now.",
-                modifier = Modifier.padding(padding),
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(errors, key = { it.id }) { error ->
-                    ErrorRecoveryCard(
-                        title = "${error.seriesTitle} • ${error.sourceName}",
-                        reason = if (error.isCloudflare) {
-                            "Cloudflare challenge paused updates. Open in WebView to clear."
-                        } else {
-                            error.reason
-                        },
-                        onRetry = { viewModel.dismissError(error.seriesId) },
-                        onOpenWebView = { onOpenWebView(error.seriesUrl) },
-                        onMigrateSource = { onMigrateSource(error.seriesId) },
-                    )
                 }
             }
         }

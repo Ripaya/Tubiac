@@ -1,8 +1,10 @@
 package tube.maniac.feature.detail
 
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bookmark
@@ -40,8 +41,6 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -56,7 +55,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -98,6 +96,11 @@ import tube.maniac.core.database.entity.DownloadEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.database.entity.toEntity
 import tube.maniac.core.designsystem.components.ErrorRecoveryCard
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.MatteCard
+import tube.maniac.core.designsystem.components.TabularBadge
+import tube.maniac.core.designsystem.components.TubiacTopBar
+import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.Chapter
@@ -425,153 +428,152 @@ fun SeriesDetailScreen(
     var showTrackerSheet by remember { mutableStateOf(false) }
     var showEditMetaDialog by remember { mutableStateOf(false) }
 
-    val nextUnreadChapter = state.chapters.lastOrNull { !it.read } ?: state.chapters.firstOrNull()
+    val nextUnreadChapter = if (state.sortDescending) {
+        state.chapters.lastOrNull { !it.read } ?: state.chapters.lastOrNull()
+    } else {
+        state.chapters.firstOrNull { !it.read } ?: state.chapters.firstOrNull()
+    }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (state.selectedChapterIds.isNotEmpty()) {
-                            "${state.selectedChapterIds.size} selected"
-                        } else {
-                            series?.displayTitle.orEmpty()
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = if (state.selectedChapterIds.isNotEmpty()) "CHAPTER SELECTION" else "SERIES ARCHIVE",
+                    title = if (state.selectedChapterIds.isNotEmpty()) {
+                        "${state.selectedChapterIds.size} Selected"
+                    } else {
+                        series?.displayTitle.orEmpty()
+                    },
+                    onBack = {
                         if (state.selectedChapterIds.isNotEmpty()) viewModel.clearChapterSelection()
                         else onBack()
-                    }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    if (state.selectedChapterIds.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.batchMarkRead(true) }) {
-                            Icon(Icons.Rounded.DoneAll, contentDescription = "Mark read")
-                        }
-                        IconButton(onClick = { viewModel.batchBookmark(true) }) {
-                            Icon(Icons.Rounded.Bookmark, contentDescription = "Bookmark")
-                        }
-                    } else if (series != null) {
-                        if (series.sourceId >= 0L) {
-                            IconButton(onClick = { viewModel.refreshFromSource(series.id) }) {
-                                Icon(Icons.Rounded.Refresh, contentDescription = "Refresh chapters")
+                    },
+                    actions = {
+                        if (state.selectedChapterIds.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.batchMarkRead(true) }) {
+                                Icon(Icons.Rounded.DoneAll, contentDescription = "Mark read")
+                            }
+                            IconButton(onClick = { viewModel.batchBookmark(true) }) {
+                                Icon(Icons.Rounded.Bookmark, contentDescription = "Bookmark")
+                            }
+                        } else if (series != null) {
+                            if (series.sourceId >= 0L) {
+                                IconButton(onClick = { viewModel.refreshFromSource(series.id) }) {
+                                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh chapters")
+                                }
+                            }
+                            IconButton(onClick = { showEditMetaDialog = true }) {
+                                Icon(Icons.Rounded.Edit, contentDescription = "Edit custom metadata")
+                            }
+                            IconButton(onClick = { onOpenWebView(viewModel.resolveWebViewUrl(series)) }) {
+                                Icon(Icons.Rounded.Public, contentDescription = "Open in WebView")
+                            }
+                            IconButton(onClick = { onOpenMigrate(series.id) }) {
+                                Icon(Icons.Rounded.SwapHoriz, contentDescription = "Migrate Source")
                             }
                         }
-                        IconButton(onClick = { showEditMetaDialog = true }) {
-                            Icon(Icons.Rounded.Edit, contentDescription = "Edit custom metadata")
-                        }
-                        IconButton(onClick = { onOpenWebView(viewModel.resolveWebViewUrl(series)) }) {
-                            Icon(Icons.Rounded.Public, contentDescription = "Open in WebView")
-                        }
-                        IconButton(onClick = { onOpenMigrate(series.id) }) {
-                            Icon(Icons.Rounded.SwapHoriz, contentDescription = "Migrate Source")
-                        }
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            if (series != null && nextUnreadChapter != null) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        onOpenReader(series.id, nextUnreadChapter.id, nextUnreadChapter.lastPageRead)
-                    },
-                    shape = CircleShape,
-                    icon = { Icon(Icons.Rounded.PlayArrow, contentDescription = null) },
-                    text = {
-                        Text(
-                            if (nextUnreadChapter.lastPageRead > 0) "Resume ${nextUnreadChapter.name}"
-                            else "Start Reading",
-                        )
                     },
                 )
+            },
+            floatingActionButton = {
+                if (series != null && nextUnreadChapter != null) {
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            onOpenReader(series.id, nextUnreadChapter.id, nextUnreadChapter.lastPageRead)
+                        },
+                        shape = MaterialTheme.shapes.small,
+                        icon = { Icon(Icons.Rounded.PlayArrow, contentDescription = null) },
+                        text = {
+                            Text(
+                                if (nextUnreadChapter.lastPageRead > 0) "Resume ${nextUnreadChapter.name}"
+                                else "Start Reading",
+                            )
+                        },
+                    )
+                }
+            },
+        ) { padding ->
+            if (series == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Series not found")
+                }
+                return@Scaffold
             }
-        },
-    ) { padding ->
-        if (series == null) {
-            Box(
+
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentAlignment = Alignment.Center,
+                contentPadding = PaddingValues(bottom = 96.dp),
             ) {
-                Text("Series not found")
-            }
-            return@Scaffold
-        }
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(bottom = 96.dp),
-        ) {
-            // Dual-layered Hero Banner & Cover Header
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(210.dp),
-                ) {
-                    AsyncImage(
-                        model = series.bannerUrl ?: series.displayCoverUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                // Editorial Matte Banner & Cover Header
+                item {
                     Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        Color.Transparent,
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                                    ),
-                                ),
-                            ),
-                    )
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.Bottom,
+                            .fillMaxWidth()
+                            .height(216.dp),
                     ) {
                         AsyncImage(
-                            model = series.displayCoverUrl,
-                            contentDescription = series.displayTitle,
+                            model = series.bannerUrl ?: series.displayCoverUrl,
+                            contentDescription = null,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(width = 100.dp, height = 144.dp)
-                                .clip(MaterialTheme.shapes.medium),
+                            modifier = Modifier.fillMaxSize(),
                         )
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = series.displayTitle,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.2f),
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
+                                        ),
+                                    ),
+                                ),
+                        )
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalAlignment = Alignment.Bottom,
+                        ) {
+                            AsyncImage(
+                                model = series.displayCoverUrl,
+                                contentDescription = series.displayTitle,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(width = 100.dp, height = 144.dp)
+                                    .clip(MaterialTheme.shapes.medium)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f), MaterialTheme.shapes.medium)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                             )
-                            Text(
-                                text = listOfNotNull(
-                                    series.author,
-                                    series.publicationStatus.name.lowercase().replaceFirstChar { it.uppercase() },
-                                    series.anilistScore?.let { "★ $it%" },
-                                ).joinToString(" • "),
-                                style = MaterialTheme.typography.labelLarge.tabular(),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = series.displayTitle,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = listOfNotNull(
+                                        series.author,
+                                        series.publicationStatus.name.lowercase().replaceFirstChar { it.uppercase() },
+                                        series.anilistScore?.let { "★ $it%" },
+                                    ).joinToString(" • "),
+                                    style = MaterialTheme.typography.labelLarge.tabular(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
-            }
 
             // Action chips: Shelf, Tracker, Metadata Source toggle
             item {
@@ -740,28 +742,19 @@ fun SeriesDetailScreen(
                 }
 
                 val selected = chapter.id in state.selectedChapterIds
-                Card(
+                MatteCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(MaterialTheme.shapes.medium)
-                        .combinedClickable(
-                            onClick = {
-                                if (state.selectedChapterIds.isNotEmpty()) {
-                                    viewModel.toggleChapterSelection(chapter.id)
-                                } else {
-                                    onOpenReader(series.id, chapter.id, chapter.lastPageRead)
-                                }
-                            },
-                            onLongClick = { viewModel.toggleChapterSelection(chapter.id) },
-                        ),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (selected) {
-                            MaterialTheme.colorScheme.primaryContainer
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    selected = selected,
+                    onClick = {
+                        if (state.selectedChapterIds.isNotEmpty()) {
+                            viewModel.toggleChapterSelection(chapter.id)
                         } else {
-                            MaterialTheme.colorScheme.surfaceContainerLow
-                        },
-                    ),
+                            onOpenReader(series.id, chapter.id, chapter.lastPageRead)
+                        }
+                    },
+                    onLongClick = { viewModel.toggleChapterSelection(chapter.id) },
                 ) {
                     Row(
                         modifier = Modifier
@@ -814,6 +807,7 @@ fun SeriesDetailScreen(
                     }
                 }
             }
+        }
         }
     }
 

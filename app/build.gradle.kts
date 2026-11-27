@@ -35,6 +35,12 @@ android {
         versionName = System.getenv("TUBIAC_VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.0-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        androidResources {
+            localeFilters += listOf("en")
+        }
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -58,13 +64,19 @@ android {
             versionNameSuffix = "-debug"
         }
         create("alpha") {
-            initWith(getByName("debug"))
+            initWith(getByName("release"))
             applicationIdSuffix = ".alpha"
             versionNameSuffix = ""
-            isDebuggable = true
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             val alphaSigning = signingConfigs.getByName("alphaRelease")
             signingConfig = if (alphaSigning.storeFile != null) alphaSigning else signingConfigs.getByName("debug")
-            matchingFallbacks += listOf("debug", "release")
+            matchingFallbacks += listOf("release", "debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
         release {
             isMinifyEnabled = true
@@ -98,7 +110,16 @@ android {
 
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "/META-INF/*.kotlin_module",
+                "/META-INF/DEPENDENCIES",
+                "/META-INF/LICENSE*",
+                "/META-INF/NOTICE*",
+                "/META-INF/androidx/*/LICENSE.txt",
+                "DebugProbesKt.bin",
+                "kotlin-tooling-metadata.json",
+            )
         }
     }
 }

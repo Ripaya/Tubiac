@@ -14,9 +14,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -29,16 +29,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -59,7 +57,10 @@ import tube.maniac.core.database.dao.SeriesDao
 import tube.maniac.core.database.entity.SeriesEntity
 import tube.maniac.core.designsystem.components.ErrorRecoveryCard
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
+import tube.maniac.core.designsystem.components.MatteBackground
+import tube.maniac.core.designsystem.components.MatteSegmentedTabs
 import tube.maniac.core.designsystem.components.SeriesCoverCard
+import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.extension.loader.LocalSource
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.PublicationStatus
@@ -220,138 +221,133 @@ fun SourceBrowseScreen(
         listOf(SourceFeedTab.POPULAR, SourceFeedTab.SEARCH)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(state.sourceName) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    state.baseUrl?.let { baseUrl ->
-                        IconButton(onClick = { onOpenWebView(baseUrl) }) {
-                            Icon(Icons.Rounded.Public, contentDescription = "Open source in WebView")
+    MatteBackground {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TubiacTopBar(
+                    kicker = "SOURCE FEED",
+                    title = state.sourceName,
+                    onBack = onBack,
+                    actions = {
+                        state.baseUrl?.let { baseUrl ->
+                            IconButton(onClick = { onOpenWebView(baseUrl) }) {
+                                Icon(Icons.Rounded.Public, contentDescription = "Open source in WebView")
+                            }
                         }
-                    }
-                    IconButton(onClick = { viewModel.loadPage(reset = true) }) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            SingleChoiceSegmentedButtonRow(
+                        IconButton(onClick = { viewModel.loadPage(reset = true) }) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = "Refresh")
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .fillMaxSize()
+                    .padding(padding),
             ) {
-                tabs.forEachIndexed { index, tab ->
-                    SegmentedButton(
-                        selected = state.activeTab == tab,
-                        onClick = { viewModel.selectTab(tab) },
-                        shape = SegmentedButtonDefaults.itemShape(index, tabs.size),
-                    ) { Text(tab.label) }
-                }
-            }
+                MatteSegmentedTabs(
+                    options = tabs.map { it.label },
+                    selectedIndex = tabs.indexOf(state.activeTab).coerceAtLeast(0),
+                    onSelect = { index -> viewModel.selectTab(tabs[index]) },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
 
-            if (state.activeTab == SourceFeedTab.SEARCH) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        value = state.query,
-                        onValueChange = viewModel::updateQuery,
-                        placeholder = { Text("Search ${state.sourceName}...") },
-                        singleLine = true,
-                        shape = CircleShape,
-                        modifier = Modifier.weight(1f),
-                    )
-                    FilledTonalButton(onClick = viewModel::executeSearch, shape = CircleShape) {
-                        Text("Go")
-                    }
-                }
-            }
-
-            state.errorMessage?.let { err ->
-                Box(modifier = Modifier.padding(16.dp)) {
-                    ErrorRecoveryCard(
-                        title = "Could not load ${state.sourceName}",
-                        reason = err,
-                        onRetry = { viewModel.loadPage(reset = true) },
-                        onOpenWebView = {
-                            val target = state.blockedUrl ?: state.baseUrl ?: "https://anilist.co"
-                            onOpenWebView(target)
-                        },
-                        onMigrateSource = onBack,
-                    )
-                }
-            }
-
-            when {
-                state.isLoading && state.items.isEmpty() -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                }
-
-                state.items.isEmpty() && state.errorMessage == null -> {
-                    val emptyMsg = if (state.sourceId == LocalSource.LOCAL_SOURCE_ID) {
-                        "No local series found. Select a Local Folder in Settings containing one subfolder per series (with CBZ/ZIP/EPUB files or image folders)."
-                    } else {
-                        "No titles returned for ${state.activeTab.label}."
-                    }
-                    ExpressiveEmptyState(
-                        icon = Icons.Rounded.Search,
-                        title = "Nothing here yet",
-                        message = emptyMsg,
-                        actionLabel = "Retry",
-                        onAction = { viewModel.loadPage(reset = true) },
-                    )
-                }
-
-                else -> {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 114.dp),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                if (state.activeTab == SourceFeedTab.SEARCH) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        items(state.items, key = { it.url }) { manga ->
-                            SeriesCoverCard(
-                                title = manga.title,
-                                coverUrl = manga.thumbnail_url,
-                                onClick = { viewModel.openManga(manga, onOpenSeriesDetail) },
-                            )
+                        OutlinedTextField(
+                            value = state.query,
+                            onValueChange = viewModel::updateQuery,
+                            placeholder = { Text("Search ${state.sourceName}...") },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { viewModel.executeSearch() }),
+                            modifier = Modifier.weight(1f),
+                        )
+                        FilledTonalButton(onClick = viewModel::executeSearch, shape = MaterialTheme.shapes.small) {
+                            Text("Go")
                         }
-                        if (state.hasNextPage) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                ) {
-                                    OutlinedButton(
-                                        onClick = { viewModel.loadPage(reset = false) },
-                                        enabled = !state.isLoading,
-                                        shape = CircleShape,
+                    }
+                }
+
+                state.errorMessage?.let { err ->
+                    Box(modifier = Modifier.padding(16.dp)) {
+                        ErrorRecoveryCard(
+                            title = "Could not load ${state.sourceName}",
+                            reason = err,
+                            onRetry = { viewModel.loadPage(reset = true) },
+                            onOpenWebView = {
+                                val target = state.blockedUrl ?: state.baseUrl ?: "https://anilist.co"
+                                onOpenWebView(target)
+                            },
+                            onMigrateSource = onBack,
+                        )
+                    }
+                }
+
+                when {
+                    state.isLoading && state.items.isEmpty() -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+
+                    state.items.isEmpty() && state.errorMessage == null -> {
+                        val emptyMsg = if (state.sourceId == LocalSource.LOCAL_SOURCE_ID) {
+                            "No local series found. Select a Local Folder in Settings containing one subfolder per series (with CBZ/ZIP/EPUB files or image folders)."
+                        } else {
+                            "No titles returned for ${state.activeTab.label}."
+                        }
+                        ExpressiveEmptyState(
+                            icon = Icons.Rounded.Search,
+                            title = "Nothing here yet",
+                            message = emptyMsg,
+                            actionLabel = "Retry",
+                            onAction = { viewModel.loadPage(reset = true) },
+                        )
+                    }
+
+                    else -> {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 114.dp),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(state.items, key = { it.url }) { manga ->
+                                SeriesCoverCard(
+                                    title = manga.title,
+                                    coverUrl = manga.thumbnail_url,
+                                    onClick = { viewModel.openManga(manga, onOpenSeriesDetail) },
+                                )
+                            }
+                            if (state.hasNextPage) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.Center,
                                     ) {
-                                        if (state.isLoading) {
-                                            CircularProgressIndicator(modifier = Modifier.width(16.dp))
-                                            Spacer(Modifier.width(8.dp))
+                                        OutlinedButton(
+                                            onClick = { viewModel.loadPage(reset = false) },
+                                            enabled = !state.isLoading,
+                                            shape = MaterialTheme.shapes.small,
+                                        ) {
+                                            if (state.isLoading) {
+                                                CircularProgressIndicator(modifier = Modifier.width(16.dp))
+                                                Spacer(Modifier.width(8.dp))
+                                            }
+                                            Text(if (state.isLoading) "Loading..." else "Load More")
                                         }
-                                        Text(if (state.isLoading) "Loading..." else "Load More")
                                     }
                                 }
                             }
