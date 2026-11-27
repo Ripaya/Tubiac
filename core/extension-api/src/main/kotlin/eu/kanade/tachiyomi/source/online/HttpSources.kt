@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.source.online
 
+import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -14,6 +16,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import rx.Observable
+import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 
 object ExtensionNetworkBridge {
@@ -26,9 +29,6 @@ object ExtensionNetworkBridge {
     }
 }
 
-fun GET(url: String, headers: Headers = Headers.headersOf()): Request =
-    Request.Builder().url(url).headers(headers).get().build()
-
 fun Response.asJsoup(html: String? = null): Document =
     Jsoup.parse(html ?: body.string(), request.url.toString())
 
@@ -36,6 +36,8 @@ abstract class HttpSource : CatalogueSource {
 
     abstract val baseUrl: String
     open val versionId: Int = 1
+
+    open val network: NetworkHelper by injectLazy()
 
     override val id: Long by lazy {
         val key = "${name.lowercase()}/$lang/$versionId"
@@ -45,9 +47,9 @@ abstract class HttpSource : CatalogueSource {
     }
 
     open val client: OkHttpClient
-        get() = ExtensionNetworkBridge.sharedClient
+        get() = network.client
 
-    val headers: Headers by lazy { headersBuilder().build() }
+    open val headers: Headers by lazy { headersBuilder().build() }
 
     protected open fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", ExtensionNetworkBridge.userAgentProvider())

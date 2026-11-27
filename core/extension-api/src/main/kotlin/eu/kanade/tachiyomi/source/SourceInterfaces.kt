@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.source
 
-import android.content.SharedPreferences
+import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -38,21 +38,14 @@ interface CatalogueSource : Source {
     suspend fun getLatestUpdates(page: Int): MangasPage = fetchLatestUpdates(page).toBlocking().first()
 }
 
+interface UnmeteredSource
+
 /**
- * Allows extensions to declare user-configurable preferences (e.g. mirror domain, quality).
+ * Standard Mihon/Tachiyomi configurable source contract using AndroidX PreferenceScreen.
  */
 interface ConfigurableSource : Source {
-    fun getPreferenceSchema(): List<SourcePreferenceItem> = emptyList()
-    fun onPreferenceChanged(key: String, value: Any?, preferences: SharedPreferences) {}
+    fun setupPreferenceScreen(screen: PreferenceScreen)
 }
-
-data class SourcePreferenceItem(
-    val key: String,
-    val title: String,
-    val summary: String = "",
-    val defaultValue: String = "",
-    val options: List<String> = emptyList(),
-)
 
 interface SourceFactory {
     fun createSources(): List<Source>

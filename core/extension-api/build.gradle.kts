@@ -31,8 +31,12 @@ kotlin {
 
 dependencies {
     api(libs.okhttp)
+    api(libs.okhttp.brotli)
+    api(libs.okhttp.zstd)
     api(libs.jsoup)
     api(libs.rxjava)
     api(libs.androidx.preference.ktx)
+    api(libs.kotlinx.serialization.json)
+    api(libs.kotlinx.serialization.json.okio)
     implementation(libs.kotlinx.coroutines.core)
 }

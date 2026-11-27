@@ -89,6 +89,36 @@ data class AniListRecommendation(
 )
 
 @Serializable
+data class AniListReview(
+    val id: Int,
+    val summary: String,
+    val body: String = "",
+    val score: Int = 0,
+    val rating: Int = 0,
+    val userName: String = "",
+)
+
+@Serializable
+data class AniListThread(
+    val id: Int,
+    val title: String,
+    val body: String = "",
+    val replyCount: Int = 0,
+    val viewCount: Int = 0,
+    val siteUrl: String = "",
+    val authorName: String = "",
+)
+
+@Serializable
+data class AniListMediaListEntry(
+    val media: AniListMedia,
+    val status: ReadingStatus,
+    val progress: Int = 0,
+    val score: Float = 0f,
+    val notes: String? = null,
+)
+
+@Serializable
 data class RateLimitStatus(
     val remaining: Int = 90,
     val limit: Int = 90,
@@ -144,6 +174,7 @@ enum class AutoBackupFrequency {
 @Serializable
 data class AppSettings(
     val onboardingCompleted: Boolean = false,
+    val anilistClientId: String = "",
     val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     val useDynamicColor: Boolean = false,
     val useMatteTexture: Boolean = true,

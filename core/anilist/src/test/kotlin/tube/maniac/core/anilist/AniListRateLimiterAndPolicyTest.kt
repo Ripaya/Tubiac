@@ -111,10 +111,18 @@ class AniListRateLimiterAndPolicyTest {
     }
 
     @Test
-    fun `oauth callback parser extracts access token from fragment`() {
+    fun `oauth callback parser extracts access token from fragment and supports custom client id`() {
         val token = AniListAuthHelper.extractAccessTokenFromCallback(
             "tubiac://anilist-callback#access_token=abc123xyz&token_type=Bearer&expires_in=31536000",
         )
         assertEquals("abc123xyz", token)
+        assertEquals(
+            "https://anilist.co/api/v2/oauth/authorize?client_id=21850&response_type=token",
+            AniListAuthHelper.buildAuthorizeUrl(""),
+        )
+        assertEquals(
+            "https://anilist.co/api/v2/oauth/authorize?client_id=99123&response_type=token",
+            AniListAuthHelper.buildAuthorizeUrl(" 99123 "),
+        )
     }
 }

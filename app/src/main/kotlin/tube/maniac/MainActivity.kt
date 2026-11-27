@@ -52,11 +52,14 @@ import kotlinx.coroutines.launch
 import tube.maniac.core.anilist.AniListAuthHelper
 import tube.maniac.core.anilist.AniListGraphQlClient
 import tube.maniac.core.database.SettingsRepository
+import tube.maniac.core.database.dao.ExtensionRepoDao
+import tube.maniac.core.database.entity.ExtensionRepoEntity
 import tube.maniac.core.designsystem.components.ExpressiveEmptyState
 import tube.maniac.core.designsystem.components.MatteBackground
 import tube.maniac.core.designsystem.components.matteGrain
 import tube.maniac.core.designsystem.theme.TubiacTheme
 import tube.maniac.core.extension.loader.LocalSource
+import tube.maniac.core.extension.loader.RepoIndexDecoder
 import tube.maniac.core.network.NetworkRuntimeConfig
 import tube.maniac.feature.browse.BrowseScreen
 import tube.maniac.feature.browse.GlobalSearchScreen
@@ -106,6 +109,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var localSource: LocalSource
     @Inject lateinit var networkConfig: NetworkRuntimeConfig
     @Inject lateinit var aniListClient: AniListGraphQlClient
+    @Inject lateinit var extensionRepoDao: ExtensionRepoDao
 
     private var unlocked by mutableStateOf(false)
 
@@ -158,8 +162,7 @@ class MainActivity : FragmentActivity() {
             }
 
             val openAniListOAuth = {
-                val url = AniListAuthHelper.buildAuthorizeUrl(clientId = ANILIST_CLIENT_ID)
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                startActivity(AniListLoginActivity.createIntent(this, settings.anilistClientId))
             }
 
             TubiacTheme(
@@ -218,11 +221,31 @@ class MainActivity : FragmentActivity() {
 
     private fun handleDeepLinkIntent(intent: Intent?) {
         val data = intent?.dataString ?: return
-        if (!data.startsWith(AniListAuthHelper.OAUTH_CALLBACK_URI)) return
-        val token = AniListAuthHelper.extractAccessTokenFromCallback(data) ?: return
-        lifecycleScope.launch {
-            val viewer = aniListClient.fetchViewer(token).getOrNull()
-            settingsRepository.saveAniListAuth(token, viewer)
+        when {
+            data.startsWith(AniListAuthHelper.OAUTH_CALLBACK_URI) -> {
+                val token = AniListAuthHelper.extractAccessTokenFromCallback(data) ?: return
+                lifecycleScope.launch {
+                    val viewer = aniListClient.fetchViewer(token).getOrNull()
+                    settingsRepository.saveAniListAuth(token, viewer)
+                }
+            }
+            data.startsWith("tachiyomi://add-repo", ignoreCase = true) ||
+                data.startsWith("mihon://add-repo", ignoreCase = true) -> {
+                val repoUrl = RepoIndexDecoder.extractRepoInputUrl(data)
+                if (repoUrl.startsWith("http://") || repoUrl.startsWith("https://")) {
+                    lifecycleScope.launch {
+                        val name = repoUrl.substringAfter("://").substringBefore("/")
+                        extensionRepoDao.upsert(
+                            ExtensionRepoEntity(
+                                name = name,
+                                indexUrl = repoUrl,
+                                enabled = true,
+                                trusted = true,
+                            ),
+                        )
+                    }
+                }
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.source.model
 
 import android.net.Uri
+import kotlinx.serialization.json.JsonObject
 import java.io.Serializable
 
 enum class UpdateStrategy {
@@ -19,6 +20,7 @@ interface SManga : Serializable {
     var thumbnail_url: String?
     var update_strategy: UpdateStrategy
     var initialized: Boolean
+    var memo: JsonObject?
 
     fun getGenres(): List<String>? =
         genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct()
@@ -29,6 +31,7 @@ interface SManga : Serializable {
         if (other.description != null) description = other.description
         if (other.genre != null) genre = other.genre
         if (other.thumbnail_url != null) thumbnail_url = other.thumbnail_url
+        if (other.memo != null) memo = other.memo
         status = other.status
         if (!initialized) initialized = other.initialized
     }
@@ -57,6 +60,7 @@ class SMangaImpl : SManga {
     override var thumbnail_url: String? = null
     override var update_strategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE
     override var initialized: Boolean = false
+    override var memo: JsonObject? = null
 }
 
 interface SChapter : Serializable {
@@ -65,6 +69,7 @@ interface SChapter : Serializable {
     var date_upload: Long
     var chapter_number: Float
     var scanlator: String?
+    var memo: JsonObject?
 
     fun copyFrom(other: SChapter) {
         name = other.name
@@ -72,6 +77,7 @@ interface SChapter : Serializable {
         date_upload = other.date_upload
         chapter_number = other.chapter_number
         scanlator = other.scanlator
+        memo = other.memo
     }
 
     companion object {
@@ -85,7 +91,13 @@ class SChapterImpl : SChapter {
     override var date_upload: Long = 0L
     override var chapter_number: Float = -1f
     override var scanlator: String? = null
+    override var memo: JsonObject? = null
 }
+
+data class SMangaUpdate(
+    val manga: SManga,
+    val chapters: List<SChapter> = emptyList(),
+)
 
 data class MangasPage(
     val mangas: List<SManga>,
@@ -109,6 +121,10 @@ sealed class Filter<T>(val name: String, var state: T) {
     abstract class Text(name: String, state: String = "") : Filter<String>(name, state)
     abstract class CheckBox(name: String, state: Boolean = false) : Filter<Boolean>(name, state)
     abstract class TriState(name: String, state: Int = STATE_IGNORE) : Filter<Int>(name, state) {
+        fun isIgnored(): Boolean = state == STATE_IGNORE
+        fun isIncluded(): Boolean = state == STATE_INCLUDE
+        fun isExcluded(): Boolean = state == STATE_EXCLUDE
+
         companion object {
             const val STATE_IGNORE = 0
             const val STATE_INCLUDE = 1

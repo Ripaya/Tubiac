@@ -1,14 +1,18 @@
 # Preserve Tachiyomi/Mihon extension API stubs & networking helpers loaded dynamically via PathClassLoader
 -keep class eu.kanade.tachiyomi.** { *; }
 -keep interface eu.kanade.tachiyomi.** { *; }
+-keep class keiyoushi.** { *; }
 -keep class uy.kohesive.injekt.** { *; }
+-keep interface uy.kohesive.injekt.** { *; }
 -keep class rx.** { *; }
 -keep class org.jsoup.** { *; }
 -keep class okhttp3.** { *; }
 -keep class okio.** { *; }
 -keep class androidx.preference.** { *; }
+-keep class kotlinx.serialization.** { *; }
 -keep class tube.maniac.core.extension.** { *; }
 
+-dontwarn keiyoushi.**
 -dontwarn eu.kanade.tachiyomi.**
 -dontwarn uy.kohesive.injekt.**
 -dontwarn rx.**

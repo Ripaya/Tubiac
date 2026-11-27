@@ -203,6 +203,53 @@ enum class ExtensionInstallState {
 }
 
 @Serializable
+data class ExtensionSourceMeta(
+    val id: Long = 0L,
+    val name: String,
+    val lang: String = "all",
+    val baseUrl: String = "",
+    val mirrorUrls: List<String> = emptyList(),
+)
+
+@Serializable
+enum class ExtractedPreferenceType {
+    TEXT,
+    SWITCH,
+    LIST,
+    MULTI_SELECT,
+    ACTION,
+}
+
+@Serializable
+data class ExtractedPreferenceItem(
+    val key: String,
+    val title: String,
+    val summary: String = "",
+    val type: ExtractedPreferenceType,
+    val currentValue: String = "",
+    val booleanValue: Boolean = false,
+    val entries: List<String> = emptyList(),
+    val entryValues: List<String> = emptyList(),
+    val multiValues: Set<String> = emptySet(),
+)
+
+@Serializable
+data class ExtractedComment(
+    val author: String,
+    val body: String,
+    val timestampLabel: String = "",
+    val origin: String = "Source",
+)
+
+@Serializable
+data class DomainCookieInfo(
+    val domain: String,
+    val cookieNames: List<String> = emptyList(),
+    val hasSessionCookie: Boolean = false,
+    val hasCloudflareClearance: Boolean = false,
+)
+
+@Serializable
 data class ExtensionInfo(
     val pkgName: String,
     val name: String,
@@ -211,11 +258,15 @@ data class ExtensionInfo(
     val versionCode: Long,
     val isNsfw: Boolean = false,
     val apkName: String? = null,
+    val apkUrl: String? = null,
     val iconUrl: String? = null,
     val repoBaseUrl: String? = null,
+    val libVersion: String? = null,
+    val sources: List<ExtensionSourceMeta> = emptyList(),
     val hasConfigurablePreferences: Boolean = false,
     val installState: ExtensionInstallState = ExtensionInstallState.AVAILABLE,
     val installedVersionCode: Long? = null,
+    val isSandboxInstalled: Boolean = false,
 )
 
 @Serializable

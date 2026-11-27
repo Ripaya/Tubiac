@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Cookie
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Extension
@@ -29,15 +32,18 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -91,13 +97,17 @@ import tube.maniac.core.designsystem.components.MatteSegmentedTabs
 import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.extension.loader.ExtensionExtrasExtractor
 import tube.maniac.core.extension.loader.ExtensionRepoManager
 import tube.maniac.core.extension.loader.LocalSource
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.AniListMedia
+import tube.maniac.core.model.DomainCookieInfo
 import tube.maniac.core.model.ExtensionInfo
 import tube.maniac.core.model.ExtensionInstallState
 import tube.maniac.core.model.ExtensionRepo
+import tube.maniac.core.model.ExtractedPreferenceItem
+import tube.maniac.core.model.ExtractedPreferenceType
 import tube.maniac.core.model.MigrationCandidate
 import tube.maniac.core.model.PublicationStatus
 import javax.inject.Inject
@@ -114,6 +124,16 @@ enum class ExtensionFilterTab(val label: String) {
     UPDATES("Updates"),
 }
 
+data class InspectedSourceBundle(
+    val title: String,
+    val pkgName: String? = null,
+    val primarySourceId: Long? = null,
+    val baseUrls: List<String> = emptyList(),
+    val preferences: List<ExtractedPreferenceItem> = emptyList(),
+    val cookies: List<DomainCookieInfo> = emptyList(),
+    val isSandboxInstalled: Boolean = false,
+)
+
 data class BrowseUiState(
     val activeTab: BrowseSubTab = BrowseSubTab.SOURCES,
     val sources: List<Source> = emptyList(),
@@ -124,7 +144,9 @@ data class BrowseUiState(
     val showNsfw: Boolean = false,
     val extensionSubTab: ExtensionFilterTab = ExtensionFilterTab.INSTALLED,
     val langFilter: String = "all",
+    val extensionQuery: String = "",
     val statusMessage: String? = null,
+    val inspectedBundle: InspectedSourceBundle? = null,
 )
 
 @HiltViewModel
@@ -133,13 +155,16 @@ class BrowseViewModel @Inject constructor(
     private val repoManager: ExtensionRepoManager,
     private val repoDao: ExtensionRepoDao,
     private val settingsRepository: SettingsRepository,
+    private val extrasExtractor: ExtensionExtrasExtractor,
 ) : ViewModel() {
 
     private val activeTabFlow = MutableStateFlow(BrowseSubTab.SOURCES)
     private val extSubTabFlow = MutableStateFlow(ExtensionFilterTab.INSTALLED)
     private val langFilterFlow = MutableStateFlow("all")
+    private val extQueryFlow = MutableStateFlow("")
     private val remoteExtensionsFlow = MutableStateFlow<List<ExtensionInfo>>(emptyList())
     private val statusMessageFlow = MutableStateFlow<String?>(null)
+    private val inspectedBundleFlow = MutableStateFlow<InspectedSourceBundle?>(null)
 
     val uiState: StateFlow<BrowseUiState> = combine(
         combine(
@@ -160,16 +185,30 @@ class BrowseViewModel @Inject constructor(
                 repos = repos.map { it.toDomain() },
             )
         },
-        settingsRepository.settingsFlow,
-        extSubTabFlow,
-        langFilterFlow,
-        statusMessageFlow,
-    ) { base, settings, extTab, lang, message ->
+        combine(
+            settingsRepository.settingsFlow,
+            extSubTabFlow,
+            langFilterFlow,
+            extQueryFlow,
+            statusMessageFlow,
+        ) { settings, extTab, lang, extQuery, msg ->
+            listOf(settings, extTab, lang, extQuery, msg)
+        },
+        inspectedBundleFlow,
+    ) { base, extras, bundle ->
+        @Suppress("UNCHECKED_CAST")
+        val settings = extras[0] as tube.maniac.core.model.AppSettings
+        val extTab = extras[1] as ExtensionFilterTab
+        val lang = extras[2] as String
+        val extQuery = extras[3] as String
+        val msg = extras[4] as String?
         base.copy(
             showNsfw = settings.showNsfwExtensions,
             extensionSubTab = extTab,
             langFilter = lang,
-            statusMessage = message,
+            extensionQuery = extQuery,
+            statusMessage = msg,
+            inspectedBundle = bundle,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BrowseUiState())
 
@@ -194,6 +233,10 @@ class BrowseViewModel @Inject constructor(
         langFilterFlow.value = lang
     }
 
+    fun updateExtensionQuery(q: String) {
+        extQueryFlow.value = q
+    }
+
     fun refreshAll() {
         sourceManager.reloadExtensions()
         refreshRepos()
@@ -201,7 +244,7 @@ class BrowseViewModel @Inject constructor(
 
     fun refreshRepos() {
         viewModelScope.launch {
-            statusMessageFlow.value = "Refreshing repository indices..."
+            statusMessageFlow.value = "Decoding repository indices (index.pb / repo.json / index.min.json)..."
             val installedMap = sourceManager.installedExtensions.value.associate { it.info.pkgName to it.info }
             val result = repoManager.refreshAllEnabledReposWithErrors(installedMap)
             remoteExtensionsFlow.value = result.extensions
@@ -247,15 +290,106 @@ class BrowseViewModel @Inject constructor(
 
     fun installExtension(ext: ExtensionInfo) {
         viewModelScope.launch {
-            statusMessageFlow.value = "Downloading ${ext.name}..."
+            statusMessageFlow.value = "Extracting ${ext.name} into sandbox..."
             repoManager.installExtensionApk(ext)
-                .onSuccess { statusMessageFlow.value = "Confirm installation prompt for ${ext.name}..." }
+                .onSuccess {
+                    sourceManager.reloadExtensions()
+                    val installedMap = sourceManager.installedExtensions.value.associate { it.info.pkgName to it.info }
+                    val updatedRemote = remoteExtensionsFlow.value.map { item ->
+                        if (item.pkgName == ext.pkgName) {
+                            item.copy(
+                                installState = ExtensionInstallState.INSTALLED,
+                                installedVersionCode = item.versionCode,
+                                isSandboxInstalled = true,
+                            )
+                        } else {
+                            val match = installedMap[item.pkgName]
+                            if (match != null) item.copy(installState = ExtensionInstallState.INSTALLED, installedVersionCode = match.versionCode)
+                            else item
+                        }
+                    }
+                    remoteExtensionsFlow.value = updatedRemote
+                    statusMessageFlow.value = "${ext.name} extracted & ready in Sources."
+                }
                 .onFailure { statusMessageFlow.value = it.message ?: "Install failed" }
         }
     }
 
-    fun uninstallExtension(pkgName: String) {
-        repoManager.requestUninstall(pkgName)
+    fun uninstallExtension(ext: ExtensionInfo) {
+        repoManager.uninstallExtension(ext.pkgName, ext.isSandboxInstalled)
+        sourceManager.reloadExtensions()
+        statusMessageFlow.value = "Removed ${ext.name}."
+    }
+
+    fun inspectSource(source: Source) {
+        viewModelScope.launch {
+            val prefs = extrasExtractor.extractSourcePreferences(source).getOrDefault(emptyList())
+            val urls = listOfNotNull((source as? HttpSource)?.baseUrl)
+            val cookies = extrasExtractor.inspectDomainCookies(urls)
+            inspectedBundleFlow.value = InspectedSourceBundle(
+                title = source.name,
+                primarySourceId = source.id,
+                baseUrls = urls,
+                preferences = prefs,
+                cookies = cookies,
+            )
+        }
+    }
+
+    fun inspectInstalledExtension(ext: ExtensionInfo) {
+        viewModelScope.launch {
+            val loaded = sourceManager.installedExtensions.value.firstOrNull { it.info.pkgName == ext.pkgName }
+            val primarySource = loaded?.sources?.firstOrNull()
+            val prefs = primarySource?.let { extrasExtractor.extractSourcePreferences(it).getOrDefault(emptyList()) }
+                .orEmpty()
+            val urls = loaded?.sources?.mapNotNull { (it as? HttpSource)?.baseUrl }?.distinct().orEmpty()
+            val cookies = extrasExtractor.inspectDomainCookies(urls)
+            inspectedBundleFlow.value = InspectedSourceBundle(
+                title = ext.name,
+                pkgName = ext.pkgName,
+                primarySourceId = primarySource?.id,
+                baseUrls = urls,
+                preferences = prefs,
+                cookies = cookies,
+                isSandboxInstalled = ext.isSandboxInstalled,
+            )
+        }
+    }
+
+    fun dismissInspector() {
+        inspectedBundleFlow.value = null
+    }
+
+    fun saveTextPref(sourceId: Long, key: String, value: String) {
+        extrasExtractor.updateTextPreference(sourceId, key, value)
+        inspectedBundleFlow.value?.let { bundle ->
+            inspectedBundleFlow.value = bundle.copy(
+                preferences = bundle.preferences.map {
+                    if (it.key == key) it.copy(currentValue = value) else it
+                },
+            )
+        }
+    }
+
+    fun saveBoolPref(sourceId: Long, key: String, value: Boolean) {
+        extrasExtractor.updateBooleanPreference(sourceId, key, value)
+        inspectedBundleFlow.value?.let { bundle ->
+            inspectedBundleFlow.value = bundle.copy(
+                preferences = bundle.preferences.map {
+                    if (it.key == key) it.copy(booleanValue = value) else it
+                },
+            )
+        }
+    }
+
+    fun clearDomainCookies(domain: String) {
+        extrasExtractor.clearCookiesForDomain(domain)
+        inspectedBundleFlow.value?.let { bundle ->
+            inspectedBundleFlow.value = bundle.copy(
+                cookies = extrasExtractor.inspectDomainCookies(bundle.baseUrls),
+            )
+        }
+        statusMessageFlow.value = "Cleared cookies for $domain."
     }
 }
 
@@ -330,14 +464,17 @@ fun BrowseScreen(
                         onGlobalSearch = onOpenGlobalSearch,
                         onOpenSource = onOpenSource,
                         onOpenWebView = onOpenWebView,
+                        onInspectSource = viewModel::inspectSource,
                     )
 
                     BrowseSubTab.EXTENSIONS -> ExtensionsList(
                         state = state,
+                        onQueryChange = viewModel::updateExtensionQuery,
                         onSelectTab = viewModel::selectExtensionTab,
                         onSelectLang = viewModel::selectLang,
                         onInstall = viewModel::installExtension,
                         onUninstall = viewModel::uninstallExtension,
+                        onInspectExtension = viewModel::inspectInstalledExtension,
                     )
 
                     BrowseSubTab.REPOS -> ReposList(
@@ -352,10 +489,138 @@ fun BrowseScreen(
         }
     }
 
+    state.inspectedBundle?.let { bundle ->
+        ModalBottomSheet(
+            onDismissRequest = viewModel::dismissInspector,
+            shape = MaterialTheme.shapes.large,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(bundle.title, style = MaterialTheme.typography.titleLarge)
+                bundle.pkgName?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                if (bundle.baseUrls.isNotEmpty()) {
+                    Text("LOGIN & COOKIES", style = MaterialTheme.typography.labelSmall.kicker, color = MaterialTheme.colorScheme.primary)
+                    bundle.baseUrls.forEach { baseUrl ->
+                        val host = baseUrl.substringAfter("://").substringBefore("/")
+                        val cookieInfo = bundle.cookies.firstOrNull { it.domain.equals(host, ignoreCase = true) }
+                        MatteCard {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(host, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = if (cookieInfo != null && cookieInfo.cookieNames.isNotEmpty()) {
+                                        "Cookies (${cookieInfo.cookieNames.size}): ${cookieInfo.cookieNames.take(4).joinToString(", ")}" +
+                                            (if (cookieInfo.hasCloudflareClearance) " • CF Cleared" else "") +
+                                            (if (cookieInfo.hasSessionCookie) " • Session Active" else "")
+                                    } else {
+                                        "No domain cookies captured yet."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FilledTonalButton(
+                                        onClick = { onOpenWebView(baseUrl) },
+                                        shape = MaterialTheme.shapes.small,
+                                    ) {
+                                        Icon(Icons.Rounded.Public, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Sign In / WebView")
+                                    }
+                                    if (cookieInfo != null && cookieInfo.cookieNames.isNotEmpty()) {
+                                        OutlinedButton(
+                                            onClick = { viewModel.clearDomainCookies(host) },
+                                            shape = MaterialTheme.shapes.small,
+                                        ) {
+                                            Icon(Icons.Rounded.Cookie, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Clear")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (bundle.preferences.isNotEmpty() && bundle.primarySourceId != null) {
+                    Text("SOURCE PREFERENCES", style = MaterialTheme.typography.labelSmall.kicker, color = MaterialTheme.colorScheme.primary)
+                    bundle.preferences.forEach { pref ->
+                        MatteCard {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(pref.title, style = MaterialTheme.typography.titleSmall)
+                                if (pref.summary.isNotBlank()) {
+                                    Text(pref.summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                when (pref.type) {
+                                    ExtractedPreferenceType.SWITCH -> {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(if (pref.booleanValue) "Enabled" else "Disabled", style = MaterialTheme.typography.labelMedium)
+                                            Switch(
+                                                checked = pref.booleanValue,
+                                                onCheckedChange = { v -> viewModel.saveBoolPref(bundle.primarySourceId, pref.key, v) },
+                                            )
+                                        }
+                                    }
+                                    ExtractedPreferenceType.LIST -> {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            pref.entryValues.forEachIndexed { idx, value ->
+                                                val label = pref.entries.getOrNull(idx) ?: value
+                                                FilterChip(
+                                                    selected = pref.currentValue == value,
+                                                    onClick = { viewModel.saveTextPref(bundle.primarySourceId, pref.key, value) },
+                                                    label = { Text(label) },
+                                                    shape = MaterialTheme.shapes.small,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    else -> {
+                                        var draft by remember(pref.key, pref.currentValue) { mutableStateOf(pref.currentValue) }
+                                        OutlinedTextField(
+                                            value = draft,
+                                            onValueChange = { draft = it },
+                                            singleLine = true,
+                                            shape = MaterialTheme.shapes.small,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        TextButton(onClick = { viewModel.saveTextPref(bundle.primarySourceId, pref.key, draft) }) {
+                                            Text("Save")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.size(16.dp))
+            }
+        }
+    }
+
     if (showAddRepoDialog) {
         var name by remember { mutableStateOf("") }
         var url by remember { mutableStateOf("") }
-        var trusted by remember { mutableStateOf(false) }
+        var trusted by remember { mutableStateOf(true) }
 
         AlertDialog(
             onDismissRequest = { showAddRepoDialog = false },
@@ -363,20 +628,20 @@ fun BrowseScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Enter a Tachiyomi/Mihon compatible index.min.json repository URL.",
+                        text = "Enter a Mihon/Tachiyomi repo URL (supports index.pb, repo.json, index.min.json, base repo URL, or tachiyomi://add-repo?url=...).",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Display name") },
+                        label = { Text("Display name (optional)") },
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = url,
                         onValueChange = { url = it },
-                        label = { Text("index.min.json URL") },
-                        placeholder = { Text("https://.../index.min.json") },
+                        label = { Text("Repository URL") },
+                        placeholder = { Text("https://.../index.pb or repo base") },
                         singleLine = true,
                     )
                     Row(
@@ -384,18 +649,23 @@ fun BrowseScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Trust third-party APK signatures", style = MaterialTheme.typography.bodyMedium)
+                        Text("Trust extensions from this repository", style = MaterialTheme.typography.bodyMedium)
                         Switch(checked = trusted, onCheckedChange = { trusted = it })
                     }
                 }
             },
             confirmButton = {
+                val trimmed = url.trim()
+                val validInput = trimmed.startsWith("https://", true) ||
+                    trimmed.startsWith("http://", true) ||
+                    trimmed.startsWith("tachiyomi://", true) ||
+                    trimmed.startsWith("mihon://", true)
                 TextButton(
                     onClick = {
                         viewModel.addRepo(name, url, trusted)
                         showAddRepoDialog = false
                     },
-                    enabled = url.trim().startsWith("https://") || url.trim().startsWith("http://"),
+                    enabled = validInput,
                 ) { Text("Add Repo") }
             },
             dismissButton = {
@@ -411,6 +681,7 @@ private fun SourcesList(
     onGlobalSearch: () -> Unit,
     onOpenSource: (Long) -> Unit,
     onOpenWebView: (String) -> Unit,
+    onInspectSource: (Source) -> Unit,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -467,6 +738,9 @@ private fun SourcesList(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (source is HttpSource) {
+                            IconButton(onClick = { onInspectSource(source) }) {
+                                Icon(Icons.Rounded.Tune, contentDescription = "Source settings & cookies")
+                            }
                             IconButton(onClick = { onOpenWebView(source.baseUrl) }) {
                                 Icon(Icons.Rounded.Public, contentDescription = "Open in WebView")
                             }
@@ -486,10 +760,12 @@ private fun SourcesList(
 @Composable
 private fun ExtensionsList(
     state: BrowseUiState,
+    onQueryChange: (String) -> Unit,
     onSelectTab: (ExtensionFilterTab) -> Unit,
     onSelectLang: (String) -> Unit,
     onInstall: (ExtensionInfo) -> Unit,
-    onUninstall: (String) -> Unit,
+    onUninstall: (ExtensionInfo) -> Unit,
+    onInspectExtension: (ExtensionInfo) -> Unit,
 ) {
     val dynamicLangs = remember(state.installedExtensions, state.remoteExtensions) {
         val detected = (state.installedExtensions + state.remoteExtensions)
@@ -499,6 +775,7 @@ private fun ExtensionsList(
         (listOf("all", "en", "tr", "ja", "ko", "zh") + detected).distinct()
     }
 
+    val query = state.extensionQuery.trim()
     val list = when (state.extensionSubTab) {
         ExtensionFilterTab.INSTALLED -> state.installedExtensions
         ExtensionFilterTab.AVAILABLE -> state.remoteExtensions.filter {
@@ -509,10 +786,24 @@ private fun ExtensionsList(
         }
     }.filter { ext ->
         (state.showNsfw || !ext.isNsfw) &&
-            (state.langFilter == "all" || ext.lang.equals(state.langFilter, ignoreCase = true))
+            (state.langFilter == "all" || ext.lang.equals(state.langFilter, ignoreCase = true)) &&
+            (query.isBlank() || ext.name.contains(query, ignoreCase = true) ||
+                ext.pkgName.contains(query, ignoreCase = true) ||
+                ext.sources.any { it.name.contains(query, ignoreCase = true) })
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        OutlinedTextField(
+            value = state.extensionQuery,
+            onValueChange = onQueryChange,
+            placeholder = { Text("Search extensions or source names...") },
+            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+            singleLine = true,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+        )
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -554,15 +845,19 @@ private fun ExtensionsList(
             ExpressiveEmptyState(
                 icon = Icons.Rounded.Extension,
                 title = "No extensions in ${state.extensionSubTab.label}",
-                message = "Add a Tachiyomi/Mihon repository in the Repos tab to browse compatible extensions.",
+                message = "Add an index.pb / repo.json / index.min.json repository in the Repos tab to extract compatible extensions.",
             )
         } else {
             LazyColumn(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(list, key = { it.pkgName }) { ext ->
-                    MatteCard {
+                items(list.take(200), key = { it.pkgName }) { ext ->
+                    MatteCard(
+                        onClick = if (ext.installState == ExtensionInstallState.INSTALLED) {
+                            { onInspectExtension(ext) }
+                        } else null,
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -590,8 +885,9 @@ private fun ExtensionsList(
                                     Text(ext.name, style = MaterialTheme.typography.titleSmall)
                                     Text(
                                         text = "${ext.lang.uppercase()} • v${ext.versionName}" +
+                                            (if (ext.sources.size > 1) " • ${ext.sources.size} sources" else "") +
                                             (if (ext.isNsfw) " • 18+" else "") +
-                                            (if (ext.installState == ExtensionInstallState.UNTRUSTED) " • Untrusted repo" else ""),
+                                            (if (ext.isSandboxInstalled) " • Sandbox" else ""),
                                         style = MaterialTheme.typography.labelMedium.tabular(),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -599,8 +895,13 @@ private fun ExtensionsList(
                             }
                             when (ext.installState) {
                                 ExtensionInstallState.INSTALLED -> {
-                                    OutlinedButton(onClick = { onUninstall(ext.pkgName) }, shape = MaterialTheme.shapes.small) {
-                                        Text("Uninstall")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        IconButton(onClick = { onInspectExtension(ext) }) {
+                                            Icon(Icons.Rounded.Tune, contentDescription = "Extension settings & cookies")
+                                        }
+                                        OutlinedButton(onClick = { onUninstall(ext) }, shape = MaterialTheme.shapes.small) {
+                                            Text("Remove")
+                                        }
                                     }
                                 }
                                 ExtensionInstallState.UPDATE_AVAILABLE -> {
@@ -612,7 +913,7 @@ private fun ExtensionsList(
                                     FilledTonalButton(onClick = { onInstall(ext) }, shape = MaterialTheme.shapes.small) {
                                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Install")
+                                        Text("Extract")
                                     }
                                 }
                             }

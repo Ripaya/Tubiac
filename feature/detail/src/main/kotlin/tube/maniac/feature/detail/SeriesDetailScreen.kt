@@ -33,6 +33,8 @@ import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Forum
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
@@ -87,6 +89,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tube.maniac.core.anilist.AniListGraphQlClient
 import tube.maniac.core.database.SettingsRepository
 import tube.maniac.core.database.dao.ChapterDao
 import tube.maniac.core.database.dao.DownloadDao
@@ -102,8 +105,13 @@ import tube.maniac.core.designsystem.components.TabularBadge
 import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.extension.loader.ExtensionExtrasExtractor
 import tube.maniac.core.extension.loader.SourceManager
+import tube.maniac.core.model.AniListMedia
+import tube.maniac.core.model.AniListReview
+import tube.maniac.core.model.AniListThread
 import tube.maniac.core.model.Chapter
+import tube.maniac.core.model.ExtractedComment
 import tube.maniac.core.model.MetadataSource
 import tube.maniac.core.model.PublicationStatus
 import tube.maniac.core.model.ReadingStatus
@@ -126,6 +134,11 @@ data class SeriesDetailUiState(
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
     val blockedUrl: String? = null,
+    val sourceComments: List<ExtractedComment> = emptyList(),
+    val anilistReviews: List<AniListReview> = emptyList(),
+    val anilistThreads: List<AniListThread> = emptyList(),
+    val loadingCommunity: Boolean = false,
+    val anilistSearchMatches: List<AniListMedia> = emptyList(),
 )
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -137,6 +150,8 @@ class SeriesDetailViewModel @Inject constructor(
     private val downloadDao: DownloadDao,
     private val sourceManager: SourceManager,
     private val settingsRepository: SettingsRepository,
+    private val aniListClient: AniListGraphQlClient,
+    private val extrasExtractor: ExtensionExtrasExtractor,
 ) : ViewModel() {
 
     private val seriesIdFlow = MutableStateFlow<Long?>(null)
@@ -145,6 +160,10 @@ class SeriesDetailViewModel @Inject constructor(
     private val selectedChaptersFlow = MutableStateFlow<Set<Long>>(emptySet())
     private val refreshingFlow = MutableStateFlow(false)
     private val errorFlow = MutableStateFlow<Pair<String?, String?>>(null to null)
+    private val commentsFlow = MutableStateFlow<List<ExtractedComment>>(emptyList())
+    private val anilistCommunityFlow = MutableStateFlow<Pair<List<AniListReview>, List<AniListThread>>>(emptyList<AniListReview>() to emptyList())
+    private val loadingCommunityFlow = MutableStateFlow(false)
+    private val anilistSearchFlow = MutableStateFlow<List<AniListMedia>>(emptyList())
 
     val uiState: StateFlow<SeriesDetailUiState> = seriesIdFlow.flatMapLatest { id ->
         if (id == null) {
@@ -189,15 +208,80 @@ class SeriesDetailViewModel @Inject constructor(
                 },
                 refreshingFlow,
                 errorFlow,
-            ) { base, refreshing, err ->
+                combine(
+                    commentsFlow,
+                    anilistCommunityFlow,
+                    loadingCommunityFlow,
+                    anilistSearchFlow,
+                ) { comments, community, loadingComm, matches ->
+                    listOf(comments, community, loadingComm, matches)
+                },
+            ) { base, refreshing, err, extra ->
+                @Suppress("UNCHECKED_CAST")
+                val comments = extra[0] as List<ExtractedComment>
+                @Suppress("UNCHECKED_CAST")
+                val community = extra[1] as Pair<List<AniListReview>, List<AniListThread>>
+                val loadingComm = extra[2] as Boolean
+                @Suppress("UNCHECKED_CAST")
+                val matches = extra[3] as List<AniListMedia>
                 base.copy(
                     isRefreshing = refreshing,
                     errorMessage = err.first,
                     blockedUrl = err.second,
+                    sourceComments = comments,
+                    anilistReviews = community.first,
+                    anilistThreads = community.second,
+                    loadingCommunity = loadingComm,
+                    anilistSearchMatches = matches,
                 )
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SeriesDetailUiState())
+
+    fun loadCommunityAndComments() {
+        val series = uiState.value.series ?: return
+        viewModelScope.launch {
+            loadingCommunityFlow.value = true
+            if (series.sourceId > 0L) {
+                val source = sourceManager.getSource(series.sourceId)
+                commentsFlow.value = extrasExtractor
+                    .extractCommentsFromSourcePage(source, series.url)
+                    .getOrDefault(emptyList())
+            }
+            series.anilistId?.let { mediaId ->
+                anilistCommunityFlow.value = aniListClient
+                    .fetchMediaCommunity(mediaId)
+                    .getOrDefault(emptyList<AniListReview>() to emptyList())
+            }
+            loadingCommunityFlow.value = false
+        }
+    }
+
+    fun searchAniListToBind(query: String) {
+        if (query.isBlank()) return
+        viewModelScope.launch {
+            anilistSearchFlow.value = aniListClient.searchManga(query.trim(), perPage = 8)
+                .getOrDefault(emptyList())
+        }
+    }
+
+    fun bindAniListMedia(media: AniListMedia) {
+        val series = uiState.value.series ?: return
+        viewModelScope.launch {
+            seriesDao.update(
+                series.copy(
+                    anilistId = media.id,
+                    anilistScore = media.averageScore,
+                    bannerUrl = series.bannerUrl ?: media.bannerImage,
+                    coverUrl = series.coverUrl ?: media.coverLarge,
+                    description = series.description ?: media.description,
+                    genres = if (series.genres.isEmpty()) media.genres else series.genres,
+                ).toEntity(),
+            )
+            anilistSearchFlow.value = emptyList()
+            loadCommunityAndComments()
+        }
+    }
 
     fun load(seriesId: Long) {
         seriesIdFlow.value = seriesId
@@ -427,6 +511,8 @@ fun SeriesDetailScreen(
     var expandedSynopsis by remember { mutableStateOf(false) }
     var showTrackerSheet by remember { mutableStateOf(false) }
     var showEditMetaDialog by remember { mutableStateOf(false) }
+    var showAniListLinkDialog by remember { mutableStateOf(false) }
+    var showCommunity by remember { mutableStateOf(false) }
 
     val nextUnreadChapter = if (state.sortDescending) {
         state.chapters.lastOrNull { !it.read } ?: state.chapters.lastOrNull()
@@ -575,13 +661,14 @@ fun SeriesDetailScreen(
                     }
                 }
 
-            // Action chips: Shelf, Tracker, Metadata Source toggle
+            // Action chips: Shelf, Tracker, Metadata Source, Direct AniList Link & Comments
             item {
-                Row(
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     FilterChip(
                         selected = series.inLibrary,
@@ -611,6 +698,90 @@ fun SeriesDetailScreen(
                             )
                         },
                     )
+                    AssistChip(
+                        onClick = { showAniListLinkDialog = true },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Link, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text(if (series.anilistId != null) "AL #${series.anilistId}" else "Link AniList") },
+                    )
+                    AssistChip(
+                        onClick = {
+                            showCommunity = !showCommunity
+                            if (showCommunity && state.sourceComments.isEmpty() && state.anilistReviews.isEmpty()) {
+                                viewModel.loadCommunityAndComments()
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.Forum, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text(if (showCommunity) "Hide Comments" else "Comments & Reviews") },
+                    )
+                }
+            }
+
+            if (showCommunity) {
+                item {
+                    MatteCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("COMMENTS, REVIEWS & THREADS", style = MaterialTheme.typography.labelSmall.kicker, color = MaterialTheme.colorScheme.primary)
+                                TextButton(onClick = viewModel::loadCommunityAndComments) { Text("Refresh") }
+                            }
+                            if (state.loadingCommunity) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            if (state.sourceComments.isEmpty() && state.anilistReviews.isEmpty() && state.anilistThreads.isEmpty() && !state.loadingCommunity) {
+                                Text(
+                                    text = "No extracted source comments or AniList threads yet. Link an AniList ID or open in WebView for embedded discussions.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            state.sourceComments.forEach { comment ->
+                                MatteCard(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text("${comment.author} • ${comment.origin}", style = MaterialTheme.typography.labelLarge)
+                                        Text(comment.body, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                            state.anilistReviews.forEach { review ->
+                                MatteCard(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text("AniList Review by ${review.userName.ifBlank { "Member" }} • ${review.score}/100", style = MaterialTheme.typography.labelLarge)
+                                        Text(review.summary.ifBlank { review.body }, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                            state.anilistThreads.forEach { thread ->
+                                MatteCard(
+                                    onClick = { if (thread.siteUrl.isNotBlank()) onOpenWebView(thread.siteUrl) },
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text(thread.title, style = MaterialTheme.typography.titleSmall)
+                                        Text(
+                                            text = "AniList Thread • ${thread.replyCount} replies • by ${thread.authorName}",
+                                            style = MaterialTheme.typography.labelSmall.tabular(),
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -903,6 +1074,48 @@ fun SeriesDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showEditMetaDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showAniListLinkDialog && series != null) {
+        var searchQuery by remember { mutableStateOf(series.displayTitle) }
+        AlertDialog(
+            onDismissRequest = { showAniListLinkDialog = false },
+            title = { Text("Link Direct to AniList") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = { Text("Manga title") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { viewModel.searchAniListToBind(searchQuery) }) { Text("Find") }
+                    }
+                    state.anilistSearchMatches.forEach { media ->
+                        MatteCard(
+                            onClick = {
+                                viewModel.bindAniListMedia(media)
+                                showAniListLinkDialog = false
+                            },
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                                Text(media.preferredTitle, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "#${media.id} • ${media.format.name}" + (media.averageScore?.let { " • ★ $it%" } ?: ""),
+                                    style = MaterialTheme.typography.labelSmall.tabular(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAniListLinkDialog = false }) { Text("Close") }
             },
         )
     }

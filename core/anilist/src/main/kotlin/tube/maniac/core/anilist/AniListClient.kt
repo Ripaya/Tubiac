@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -25,9 +26,12 @@ import tube.maniac.core.database.entity.PendingAniListMutationEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.database.entity.toEntity
 import tube.maniac.core.model.AniListMedia
+import tube.maniac.core.model.AniListMediaListEntry
 import tube.maniac.core.model.AniListRecommendation
 import tube.maniac.core.model.AniListRelation
+import tube.maniac.core.model.AniListReview
 import tube.maniac.core.model.AniListSyncPolicy
+import tube.maniac.core.model.AniListThread
 import tube.maniac.core.model.AniListUser
 import tube.maniac.core.model.ConflictResolution
 import tube.maniac.core.model.PublicationStatus
@@ -42,10 +46,13 @@ import javax.inject.Singleton
 
 object AniListAuthHelper {
     const val OAUTH_CALLBACK_URI = "tubiac://anilist-callback"
+    const val DEFAULT_CLIENT_ID = "21850"
     private const val AUTHORIZE_ENDPOINT = "https://anilist.co/api/v2/oauth/authorize"
 
-    fun buildAuthorizeUrl(clientId: String): String =
-        "$AUTHORIZE_ENDPOINT?client_id=$clientId&response_type=token"
+    fun buildAuthorizeUrl(clientId: String = DEFAULT_CLIENT_ID): String {
+        val effectiveId = clientId.trim().ifBlank { DEFAULT_CLIENT_ID }
+        return "$AUTHORIZE_ENDPOINT?client_id=$effectiveId&response_type=token"
+    }
 
     fun extractAccessTokenFromCallback(callbackUri: String): String? {
         val fragment = callbackUri.substringAfter("#", "")
@@ -55,7 +62,7 @@ object AniListAuthHelper {
                 val idx = part.indexOf('=')
                 if (idx <= 0) null else part.substring(0, idx) to part.substring(idx + 1)
             }
-            .firstOrNull { it.first == "access_token" }
+            .firstOrNull { it.first == "access_token" || it.first == "token" }
             ?.second
             ?.takeIf { it.isNotBlank() }
     }
@@ -159,6 +166,76 @@ class AniListGraphQlClient @Inject constructor(
         parseMedia(requireNotNull(data["Media"]?.jsonObject) { "Media not found" })
     }
 
+    /**
+     * Fetches public reviews and forum discussions directly from graphql.anilist.co for a series.
+     */
+    suspend fun fetchMediaCommunity(
+        mediaId: Int,
+    ): Result<Pair<List<AniListReview>, List<AniListThread>>> = runCatching {
+        val vars = buildJsonObject { put("mediaId", mediaId) }
+        val data = executeGraphQl(MEDIA_COMMUNITY_QUERY, vars, token = null)
+        val reviews = data["Media"]?.jsonObject
+            ?.get("reviews")?.jsonObject
+            ?.get("nodes")?.jsonArray
+            ?.mapNotNull { elem ->
+                val obj = elem.jsonObject
+                AniListReview(
+                    id = obj["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null,
+                    summary = obj["summary"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    body = obj["body"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        .replace(Regex("<[^>]*>"), "").take(500),
+                    score = obj["score"]?.jsonPrimitive?.intOrNull ?: 0,
+                    rating = obj["rating"]?.jsonPrimitive?.intOrNull ?: 0,
+                    userName = obj["user"]?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull.orEmpty(),
+                )
+            }.orEmpty()
+
+        val threads = data["Page"]?.jsonObject
+            ?.get("threads")?.jsonArray
+            ?.mapNotNull { elem ->
+                val obj = elem.jsonObject
+                AniListThread(
+                    id = obj["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null,
+                    title = obj["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    body = obj["body"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        .replace(Regex("<[^>]*>"), "").take(320),
+                    replyCount = obj["replyCount"]?.jsonPrimitive?.intOrNull ?: 0,
+                    viewCount = obj["viewCount"]?.jsonPrimitive?.intOrNull ?: 0,
+                    siteUrl = obj["siteUrl"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                    authorName = obj["user"]?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull.orEmpty(),
+                )
+            }.orEmpty()
+
+        reviews to threads
+    }
+
+    /**
+     * Fetches the authenticated user's Manga lists directly from AniList MediaListCollection.
+     */
+    suspend fun fetchViewerMediaListCollection(
+        userId: Int,
+        token: String,
+    ): Result<List<AniListMediaListEntry>> = runCatching {
+        val vars = buildJsonObject { put("userId", userId) }
+        val data = executeGraphQl(MEDIA_LIST_COLLECTION_QUERY, vars, token)
+        val lists = data["MediaListCollection"]?.jsonObject?.get("lists")?.jsonArray.orEmpty()
+        lists.flatMap { listElem ->
+            listElem.jsonObject["entries"]?.jsonArray.orEmpty().mapNotNull { entryElem ->
+                val entry = entryElem.jsonObject
+                val mediaObj = entry["media"]?.jsonObject ?: return@mapNotNull null
+                val statusName = entry["status"]?.jsonPrimitive?.contentOrNull ?: "CURRENT"
+                val status = runCatching { ReadingStatus.valueOf(statusName) }.getOrDefault(ReadingStatus.CURRENT)
+                AniListMediaListEntry(
+                    media = parseMedia(mediaObj),
+                    status = status,
+                    progress = entry["progress"]?.jsonPrimitive?.intOrNull ?: 0,
+                    score = entry["score"]?.jsonPrimitive?.floatOrNull ?: 0f,
+                    notes = entry["notes"]?.jsonPrimitive?.contentOrNull,
+                )
+            }
+        }
+    }
+
     suspend fun saveMediaListEntry(variables: JsonObject, token: String): Result<Unit> = runCatching {
         executeGraphQl(SAVE_MEDIA_LIST_MUTATION, variables, token)
     }
@@ -195,12 +272,17 @@ class AniListGraphQlClient @Inject constructor(
                 return@withContext executeGraphQl(query, variables, token, attempt + 1)
             }
 
+            val rawBody = response.body.string()
+            val parsedRoot = runCatching { json.parseToJsonElement(rawBody).jsonObject }.getOrNull()
+            val errorMsg = parsedRoot?.get("errors")?.jsonArray?.firstOrNull()?.jsonObject
+                ?.get("message")?.jsonPrimitive?.contentOrNull
+
             if (!response.isSuccessful) {
-                throw IOException("AniList GraphQL error HTTP ${response.code}")
+                throw IOException(errorMsg ?: "AniList GraphQL HTTP ${response.code}")
             }
 
-            val root = json.parseToJsonElement(response.body?.string().orEmpty()).jsonObject
-            root["data"]?.jsonObject ?: throw IOException("AniList returned empty data")
+            parsedRoot?.get("data")?.jsonObject
+                ?: throw IOException(errorMsg ?: "AniList returned empty data")
         }
     }
 
@@ -349,6 +431,63 @@ class AniListGraphQlClient @Inject constructor(
             }
         """
 
+        private const val MEDIA_COMMUNITY_QUERY = """
+            query (${'$'}mediaId: Int) {
+              Media(id: ${'$'}mediaId, type: MANGA) {
+                reviews(perPage: 8, sort: RATING_DESC) {
+                  nodes {
+                    id
+                    summary
+                    body(asHtml: false)
+                    score
+                    rating
+                    user { name }
+                  }
+                }
+              }
+              Page(page: 1, perPage: 8) {
+                threads(mediaCategoryId: ${'$'}mediaId, sort: REPLIED_AT_DESC) {
+                  id
+                  title
+                  body(asHtml: false)
+                  replyCount
+                  viewCount
+                  siteUrl
+                  user { name }
+                }
+              }
+            }
+        """
+
+        private const val MEDIA_LIST_COLLECTION_QUERY = """
+            query (${'$'}userId: Int) {
+              MediaListCollection(userId: ${'$'}userId, type: MANGA) {
+                lists {
+                  name
+                  entries {
+                    status
+                    progress
+                    score(format: POINT_10_DECIMAL)
+                    notes
+                    media {
+                      id
+                      title { romaji english native }
+                      description(asHtml: false)
+                      coverImage { extraLarge large }
+                      bannerImage
+                      format
+                      countryOfOrigin
+                      status
+                      averageScore
+                      chapters
+                      genres
+                    }
+                  }
+                }
+              }
+            }
+        """
+
         private const val SAVE_MEDIA_LIST_MUTATION = """
             mutation (
               ${'$'}mediaId: Int,
@@ -432,10 +571,36 @@ class AniListSyncEngine @Inject constructor(
         return flushed
     }
 
+    /**
+     * Pulls the authenticated user's remote AniList Manga lists directly from graphql.anilist.co
+     * into the local Room library honoring ConflictResolution.
+     */
+    suspend fun pullLibraryFromAniList(
+        userId: Int,
+        token: String,
+        conflictResolution: ConflictResolution = ConflictResolution.MERGE,
+    ): Result<Int> = runCatching {
+        val entries = client.fetchViewerMediaListCollection(userId, token).getOrThrow()
+        var imported = 0
+        entries.forEach { entry ->
+            importMediaIntoLibrary(
+                media = entry.media,
+                status = entry.status,
+                conflictResolution = conflictResolution,
+                userScore = entry.score.takeIf { it > 0f },
+                notes = entry.notes,
+            )
+            imported++
+        }
+        imported
+    }
+
     suspend fun importMediaIntoLibrary(
         media: AniListMedia,
         status: ReadingStatus,
         conflictResolution: ConflictResolution,
+        userScore: Float? = null,
+        notes: String? = null,
     ) {
         val existing = seriesDao.getByAniListId(media.id)?.toDomain()
         val merged = when {
@@ -453,6 +618,8 @@ class AniListSyncEngine @Inject constructor(
                 dateAdded = System.currentTimeMillis(),
                 anilistId = media.id,
                 anilistScore = media.averageScore,
+                userScore = userScore,
+                privateNotes = notes,
                 readingStatus = status,
             )
             conflictResolution == ConflictResolution.SKIP_EXISTING -> return
@@ -463,6 +630,8 @@ class AniListSyncEngine @Inject constructor(
                 bannerUrl = media.bannerImage,
                 genres = media.genres,
                 anilistScore = media.averageScore,
+                userScore = userScore ?: existing.userScore,
+                privateNotes = notes ?: existing.privateNotes,
                 readingStatus = status,
             )
             else -> existing.copy(
@@ -470,6 +639,8 @@ class AniListSyncEngine @Inject constructor(
                 coverUrl = existing.coverUrl ?: media.coverLarge,
                 bannerUrl = existing.bannerUrl ?: media.bannerImage,
                 anilistScore = media.averageScore,
+                userScore = existing.userScore ?: userScore,
+                privateNotes = existing.privateNotes ?: notes,
                 readingStatus = status,
             )
         }

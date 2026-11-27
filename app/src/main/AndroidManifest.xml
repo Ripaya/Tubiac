@@ -43,7 +43,25 @@
                     android:host="anilist-callback"
                     android:scheme="tubiac" />
             </intent-filter>
+
+            <!-- 1-Tap Extension Repository Import (tachiyomi://add-repo & mihon://add-repo) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="add-repo"
+                    android:scheme="tachiyomi" />
+                <data
+                    android:host="add-repo"
+                    android:scheme="mihon" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".AniListLoginActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tubiac" />
 
         <activity
             android:name=".WebViewActivity"

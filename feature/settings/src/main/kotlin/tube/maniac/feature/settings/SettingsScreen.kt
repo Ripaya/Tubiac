@@ -85,6 +85,7 @@ import tube.maniac.core.model.AnimationSpeed
 import tube.maniac.core.model.AppSettings
 import tube.maniac.core.model.AppThemeMode
 import tube.maniac.core.model.AutoBackupFrequency
+import tube.maniac.core.model.ConflictResolution
 import tube.maniac.core.model.DoHProvider
 import tube.maniac.core.model.DownloadStorageFormat
 import tube.maniac.core.model.RateLimitStatus
@@ -161,6 +162,40 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.clearAniListAuth()
             feedbackFlow.value = "AniList account disconnected. Local library preserved."
+        }
+    }
+
+    fun connectWithDirectToken(rawToken: String) {
+        val token = rawToken.trim()
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            aniListClient.fetchViewer(token)
+                .onSuccess { viewer ->
+                    settingsRepository.saveAniListAuth(token, viewer)
+                    feedbackFlow.value = "Connected directly as ${viewer.name} via graphql.anilist.co."
+                }
+                .onFailure { err ->
+                    feedbackFlow.value = "Token check failed: ${err.message}"
+                }
+        }
+    }
+
+    fun pullAniListLibrary(conflictResolution: ConflictResolution) {
+        viewModelScope.launch {
+            val token = settingsRepository.anilistTokenFlow.first()
+            val user = uiState.value.anilistUser
+            if (token.isNullOrBlank() || user == null) {
+                feedbackFlow.value = "Connect AniList first before pulling remote lists."
+                return@launch
+            }
+            feedbackFlow.value = "Importing AniList lists directly from graphql.anilist.co..."
+            aniListSyncEngine.pullLibraryFromAniList(user.id, token, conflictResolution)
+                .onSuccess { count ->
+                    feedbackFlow.value = "Imported/updated $count series from your AniList account."
+                }
+                .onFailure { err ->
+                    feedbackFlow.value = "AniList library pull failed: ${err.message}"
+                }
         }
     }
 
@@ -443,6 +478,7 @@ fun SettingsAppearanceScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsSyncScreen(
     onBack: () -> Unit,
@@ -451,6 +487,9 @@ fun SettingsSyncScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val policy = state.settings.syncPolicy
+    var directTokenInput by remember { mutableStateOf("") }
+    var clientIdInput by remember(state.settings.anilistClientId) { mutableStateOf(state.settings.anilistClientId) }
+    var conflictMode by remember { mutableStateOf(ConflictResolution.MERGE) }
 
     SettingsCategoryScaffold(
         kicker = "SETTINGS // SYNC HUB",
@@ -459,7 +498,7 @@ fun SettingsSyncScreen(
         onBack = onBack,
     ) {
         item {
-            SettingsMatteGroup(title = "AniList Account", icon = Icons.Rounded.Sync) {
+            SettingsMatteGroup(title = "Direct AniList Account (graphql.anilist.co)", icon = Icons.Rounded.Sync) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -471,9 +510,11 @@ fun SettingsSyncScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            text = "Rate limit: ${state.rateLimitStatus.remaining}/${state.rateLimitStatus.limit} req/min" +
-                                (if (state.rateLimitStatus.isDegradedMode) " (Degraded)" else "") +
-                                " • Queued: ${state.rateLimitStatus.pendingMutationsCount}",
+                            text = if (state.anilistUser != null) {
+                                "${state.anilistUser?.mangaCount ?: 0} titles • ${state.anilistUser?.chaptersRead ?: 0} ch • Queue: ${state.rateLimitStatus.pendingMutationsCount}"
+                            } else {
+                                "Direct API connection (${state.rateLimitStatus.remaining}/${state.rateLimitStatus.limit} req/min)"
+                            },
                             style = MaterialTheme.typography.labelMedium.tabular(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -486,13 +527,66 @@ fun SettingsSyncScreen(
                         }
                     }
                 }
-                FilledTonalButton(
-                    onClick = viewModel::syncAniListNow,
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = viewModel::syncAniListNow,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Push Queue")
+                    }
+                    Button(
+                        onClick = { viewModel.pullAniListLibrary(conflictMode) },
+                        enabled = state.anilistUser != null,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Pull Lists")
+                    }
+                }
+                Text("Pull Conflict Mode", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ConflictResolution.entries.forEach { mode ->
+                        FilterChip(
+                            selected = conflictMode == mode,
+                            onClick = { conflictMode = mode },
+                            label = { Text(mode.name.replace("_", " ")) },
+                            shape = MaterialTheme.shapes.small,
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                OutlinedTextField(
+                    value = directTokenInput,
+                    onValueChange = { directTokenInput = it },
+                    label = { Text("Direct Bearer Token (optional bypass)") },
+                    placeholder = { Text("Paste AniList OAuth JWT token...") },
+                    singleLine = true,
                     shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Flush Pending Sync Queue")
-                }
+                )
+                FilledTonalButton(
+                    onClick = {
+                        viewModel.connectWithDirectToken(directTokenInput)
+                        directTokenInput = ""
+                    },
+                    enabled = directTokenInput.isNotBlank(),
+                    shape = MaterialTheme.shapes.small,
+                ) { Text("Verify & Connect Token") }
+
+                OutlinedTextField(
+                    value = clientIdInput,
+                    onValueChange = { clientIdInput = it },
+                    label = { Text("Custom AniList OAuth Client ID (optional)") },
+                    placeholder = { Text("Default built-in or anilist.co/settings/developer ID") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(
+                    onClick = { viewModel.updateSettings { it.copy(anilistClientId = clientIdInput.trim()) } },
+                    shape = MaterialTheme.shapes.small,
+                ) { Text("Save Custom Client ID") }
             }
         }
 

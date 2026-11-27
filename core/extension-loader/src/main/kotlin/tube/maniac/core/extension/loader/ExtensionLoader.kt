@@ -12,11 +12,13 @@ import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import tube.maniac.core.model.ExtensionInfo
 import tube.maniac.core.model.ExtensionInstallState
 import tube.maniac.core.network.NetworkRuntimeConfig
-import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.registerInjekt
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,27 +29,44 @@ data class LoadedExtension(
 )
 
 /**
- * Discovers and dynamically loads installed Tachiyomi/Mihon extension APKs via
- * PackageManager metadata and PathClassLoader without requiring hardcoded parsers.
+ * Discovers and dynamically loads BOTH:
+ * 1. Sandbox-extracted extension APKs under files/extensions/<pkg>.apk (no OS sideload friction)
+ * 2. System-installed Tachiyomi/Mihon extension packages via PackageManager
  */
 @Singleton
 class ExtensionLoader @Inject constructor(
     @ApplicationContext private val context: Context,
     okHttpClient: OkHttpClient,
     networkConfig: NetworkRuntimeConfig,
+    json: Json,
 ) {
     init {
         ExtensionNetworkBridge.sharedClient = okHttpClient
         ExtensionNetworkBridge.userAgentProvider = { networkConfig.userAgent.get() }
         (context.applicationContext as? Application)?.let { app ->
-            Injekt.register<Application>(app)
+            registerInjekt<Application>(app)
         }
-        Injekt.register<Context>(context.applicationContext ?: context)
-        Injekt.register(NetworkHelper())
+        registerInjekt<Context>(context.applicationContext ?: context)
+        registerInjekt(NetworkHelper())
+        registerInjekt(json)
     }
+
+    fun sandboxExtensionsDir(): File = File(context.filesDir, "extensions").apply { mkdirs() }
 
     fun loadInstalledExtensions(): List<LoadedExtension> {
         val pm = context.packageManager
+        val byPkg = linkedMapOf<String, LoadedExtension>()
+
+        // 1. Load sandbox-extracted APKs stored locally in files/extensions/
+        sandboxExtensionsDir().listFiles { f -> f.isFile && f.extension.equals("apk", ignoreCase = true) }
+            ?.forEach { apkFile ->
+                val loaded = loadSandboxApk(pm, apkFile)
+                if (loaded != null) {
+                    byPkg[loaded.info.pkgName] = loaded
+                }
+            }
+
+        // 2. Load system-installed extension APKs (replacing sandbox only if newer versionCode)
         val flags = PackageManager.GET_META_DATA or PackageManager.GET_CONFIGURATIONS
         val packages: List<PackageInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(flags.toLong()))
@@ -56,9 +75,34 @@ class ExtensionLoader @Inject constructor(
             pm.getInstalledPackages(flags)
         }
 
-        return packages
+        packages
             .filter { isTachiyomiExtension(it) }
-            .mapNotNull { loadSingleExtension(pm, it) }
+            .forEach { pkgInfo ->
+                val loaded = loadPackageExtension(pm, pkgInfo, isSandbox = false) ?: return@forEach
+                val existing = byPkg[loaded.info.pkgName]
+                if (existing == null || loaded.info.versionCode > existing.info.versionCode) {
+                    byPkg[loaded.info.pkgName] = loaded
+                }
+            }
+
+        return byPkg.values.sortedBy { it.info.name.lowercase() }
+    }
+
+    private fun loadSandboxApk(pm: PackageManager, apkFile: File): LoadedExtension? {
+        runCatching { apkFile.setReadOnly() } // Android 14+ PathClassLoader requires non-writable DEX container
+        val flags = PackageManager.GET_META_DATA or PackageManager.GET_CONFIGURATIONS
+        val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(flags.toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+        } ?: return null
+
+        pkgInfo.applicationInfo?.apply {
+            sourceDir = apkFile.absolutePath
+            publicSourceDir = apkFile.absolutePath
+        }
+        return loadPackageExtension(pm, pkgInfo, isSandbox = true)
     }
 
     private fun isTachiyomiExtension(pkgInfo: PackageInfo): Boolean {
@@ -67,17 +111,23 @@ class ExtensionLoader @Inject constructor(
         return hasFeature || hasMeta
     }
 
-    private fun loadSingleExtension(pm: PackageManager, pkgInfo: PackageInfo): LoadedExtension? {
+    private fun loadPackageExtension(
+        pm: PackageManager,
+        pkgInfo: PackageInfo,
+        isSandbox: Boolean,
+    ): LoadedExtension? {
         val appInfo = pkgInfo.applicationInfo ?: return null
         val meta = appInfo.metaData ?: return null
         val classNamesRaw = meta.getString(META_EXTENSION_CLASS).orEmpty()
         if (classNamesRaw.isBlank()) return null
 
-        val isNsfw = meta.getInt(META_EXTENSION_NSFW, 0) == 1
+        val isNsfw = meta.getInt(META_EXTENSION_NSFW, 0) == 1 ||
+            meta.getInt(META_CONTENT_WARNING, 0) >= 3
         val pkgName = pkgInfo.packageName
-        val label = pm.getApplicationLabel(appInfo).toString()
-            .removePrefix("Tachiyomi: ")
-            .removePrefix("Mihon: ")
+        val label = meta.getString(META_TACHIYOMIX_NAME)?.takeIf { it.isNotBlank() }
+            ?: runCatching { pm.getApplicationLabel(appInfo).toString() }.getOrDefault(pkgName)
+                .removePrefix("Tachiyomi: ")
+                .removePrefix("Mihon: ")
         val lang = extractLanguageFromPkg(pkgName)
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             pkgInfo.longVersionCode
@@ -86,21 +136,28 @@ class ExtensionLoader @Inject constructor(
             pkgInfo.versionCode.toLong()
         }
 
-        val classLoader = PathClassLoader(appInfo.sourceDir, appInfo.nativeLibraryDir, context.classLoader)
+        val apkPath = appInfo.sourceDir ?: return null
+        val nativeLibDir = appInfo.nativeLibraryDir
         val loadedSources = mutableListOf<Source>()
         val errors = mutableListOf<String>()
 
-        classNamesRaw.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach { rawName ->
-            val fqcn = if (rawName.startsWith(".")) "$pkgName$rawName" else rawName
-            runCatching {
-                val clazz = Class.forName(fqcn, false, classLoader)
-                when (val instance = clazz.getDeclaredConstructor().newInstance()) {
-                    is Source -> loadedSources.add(instance)
-                    is SourceFactory -> loadedSources.addAll(instance.createSources())
+        runCatching {
+            val classLoader = PathClassLoader(apkPath, nativeLibDir, context.classLoader)
+            classNamesRaw.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach { rawName ->
+                val fqcn = if (rawName.startsWith(".")) "$pkgName$rawName" else rawName
+                runCatching {
+                    val clazz = Class.forName(fqcn, false, classLoader)
+                    when (val instance = clazz.getDeclaredConstructor().newInstance()) {
+                        is Source -> loadedSources.add(instance)
+                        is SourceFactory -> loadedSources.addAll(instance.createSources())
+                    }
+                }.onFailure { err ->
+                    val cause = err.cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: ""
+                    errors.add("$fqcn: ${err.javaClass.simpleName}: ${err.message ?: ""} $cause".trim())
                 }
-            }.onFailure { err ->
-                errors.add("$fqcn: ${err.javaClass.simpleName}: ${err.message ?: "unknown error"}")
             }
+        }.onFailure { err ->
+            errors.add("ClassLoader: ${err.javaClass.simpleName}: ${err.message}")
         }
 
         val info = ExtensionInfo(
@@ -113,6 +170,7 @@ class ExtensionLoader @Inject constructor(
             hasConfigurablePreferences = loadedSources.any { it is ConfigurableSource },
             installState = ExtensionInstallState.INSTALLED,
             installedVersionCode = versionCode,
+            isSandboxInstalled = isSandbox,
         )
         return LoadedExtension(
             info = info,
@@ -130,5 +188,7 @@ class ExtensionLoader @Inject constructor(
         const val EXTENSION_FEATURE = "tachiyomi.extension"
         const val META_EXTENSION_CLASS = "tachiyomi.extension.class"
         const val META_EXTENSION_NSFW = "tachiyomi.extension.nsfw"
+        const val META_CONTENT_WARNING = "tachiyomix.contentWarning"
+        const val META_TACHIYOMIX_NAME = "tachiyomix.name"
     }
 }

@@ -9,38 +9,17 @@ import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import tube.maniac.core.database.dao.ExtensionRepoDao
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.model.ExtensionInfo
-import tube.maniac.core.model.ExtensionInstallState
 import tube.maniac.core.model.ExtensionRepo
+import java.io.File
+import java.util.zip.ZipInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
-
-@Serializable
-data class RepoIndexEntryDto(
-    val name: String,
-    val pkg: String,
-    val apk: String,
-    val lang: String = "all",
-    val code: Long = 1L,
-    val version: String = "1.0.0",
-    val nsfw: Int = 0,
-    @SerialName("sources") val sourcesCount: List<RepoSourceDto> = emptyList(),
-)
-
-@Serializable
-data class RepoSourceDto(
-    val name: String,
-    val lang: String = "all",
-    val id: String = "",
-    val baseUrl: String = "",
-)
 
 object ExtensionInstallBridge {
     @Volatile
@@ -56,8 +35,9 @@ data class RepoRefreshResult(
 )
 
 /**
- * Fetches and refreshes Tachiyomi/Mihon index.min.json third-party repository indices
- * and handles APK lifecycle operations via Android PackageInstaller Session APIs.
+ * Fetches and decodes Mihon v2 (`repo.json` -> `index.pb`) and legacy (`index.min.json`)
+ * extension repositories, extracts APK binaries directly into isolated sandbox storage
+ * (for reliable zero-friction execution) or hands them off to Android PackageInstaller.
  */
 @Singleton
 class ExtensionRepoManager @Inject constructor(
@@ -71,44 +51,81 @@ class ExtensionRepoManager @Inject constructor(
         installedByPkg: Map<String, ExtensionInfo>,
     ): Result<List<ExtensionInfo>> = withContext(Dispatchers.IO) {
         runCatching {
-            val normalizedUrl = normalizeRepoIndexUrl(repo.indexUrl)
-            val request = Request.Builder().url(normalizedUrl).get().build()
-            val body = okHttpClient.newCall(request).execute().use { response ->
-                require(response.isSuccessful) { "Repository returned HTTP ${response.code}" }
-                response.body.string()
-            }
-            val entries = json.decodeFromString<List<RepoIndexEntryDto>>(body)
-            val baseUrl = normalizedUrl.substringBeforeLast("/")
+            val candidates = RepoIndexDecoder.candidateIndexUrls(repo.indexUrl)
+            require(candidates.isNotEmpty()) { "Invalid repository URL" }
 
+            var decoded: DecodedRepoIndex? = null
+            var lastError: Throwable? = null
+
+            for (candidateUrl in candidates) {
+                runCatching {
+                    fetchCandidate(candidateUrl, repo, installedByPkg)
+                }.onSuccess { result ->
+                    if (!result.isLegacyDeprecationStub && result.entries.isNotEmpty()) {
+                        decoded = result
+                    } else if (decoded == null) {
+                        decoded = result
+                    }
+                }.onFailure { err ->
+                    lastError = err
+                }
+                val current = decoded
+                if (current != null && !current.isLegacyDeprecationStub && current.entries.isNotEmpty()) {
+                    break
+                }
+            }
+
+            val finalIndex = decoded ?: throw (lastError ?: IllegalStateException("Repository unreachable"))
             repoDao.updateRefreshStatus(
                 id = repo.id,
                 timestamp = System.currentTimeMillis(),
-                count = entries.size,
+                count = finalIndex.entries.size,
             )
+            finalIndex.entries
+        }
+    }
 
-            entries.map { dto ->
-                val installed = installedByPkg[dto.pkg]
-                val state = when {
-                    !repo.trusted -> ExtensionInstallState.UNTRUSTED
-                    installed == null -> ExtensionInstallState.AVAILABLE
-                    dto.code > installed.versionCode -> ExtensionInstallState.UPDATE_AVAILABLE
-                    else -> ExtensionInstallState.INSTALLED
-                }
-                ExtensionInfo(
-                    pkgName = dto.pkg,
-                    name = dto.name.removePrefix("Tachiyomi: ").removePrefix("Mihon: "),
-                    lang = dto.lang,
-                    versionName = dto.version,
-                    versionCode = dto.code,
-                    isNsfw = dto.nsfw == 1,
-                    apkName = dto.apk,
-                    iconUrl = "$baseUrl/icon/${dto.pkg}.png",
-                    repoBaseUrl = baseUrl,
-                    installState = state,
-                    installedVersionCode = installed?.versionCode,
+    private fun fetchCandidate(
+        url: String,
+        repo: ExtensionRepo,
+        installedByPkg: Map<String, ExtensionInfo>,
+    ): DecodedRepoIndex {
+        val request = Request.Builder().url(url).get().build()
+        val rawBytes = okHttpClient.newCall(request).execute().use { response ->
+            require(response.isSuccessful) { "HTTP ${response.code} for $url" }
+            response.body.bytes()
+        }
+
+        val fallbackBase = url.substringBeforeLast("/")
+        return when {
+            url.endsWith("repo.json", ignoreCase = true) -> {
+                val meta = json.decodeFromString<RepoMetaManifestDto>(rawBytes.toString(Charsets.UTF_8))
+                val targetIndex = meta.indexV2 ?: meta.indexV1 ?: "$fallbackBase/index.pb"
+                val nested = fetchCandidate(targetIndex, repo, installedByPkg)
+                nested.copy(
+                    repoName = meta.meta?.name ?: nested.repoName,
+                    signingFingerprint = meta.meta?.signingKeyFingerprint ?: nested.signingFingerprint,
+                )
+            }
+            url.endsWith(".pb", ignoreCase = true) || isGzipOrBinaryPb(rawBytes) -> {
+                RepoIndexDecoder.decodeProtobufIndex(rawBytes, fallbackBase, repo, installedByPkg)
+            }
+            else -> {
+                RepoIndexDecoder.decodeJsonIndex(
+                    json = json,
+                    rawJson = rawBytes.toString(Charsets.UTF_8),
+                    repoBaseUrl = fallbackBase,
+                    repo = repo,
+                    installedByPkg = installedByPkg,
                 )
             }
         }
+    }
+
+    private fun isGzipOrBinaryPb(bytes: ByteArray): Boolean {
+        if (bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()) return true
+        val prefix = bytes.take(32).map { it.toInt().toChar() }.joinToString("").trimStart()
+        return !prefix.startsWith("[") && !prefix.startsWith("{")
     }
 
     suspend fun refreshAllEnabledRepos(
@@ -133,18 +150,50 @@ class ExtensionRepoManager @Inject constructor(
     }
 
     /**
-     * Streams a remote extension APK directly into an Android PackageInstaller session.
+     * Downloads, validates, and extracts the extension APK directly into Tubiac's
+     * read-only sandbox directory so PathClassLoader loads it immediately without OS sideload blocks.
      */
     suspend fun installExtensionApk(extension: ExtensionInfo): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val base = requireNotNull(extension.repoBaseUrl) { "Missing repository base URL" }
-            val apkName = requireNotNull(extension.apkName) { "Missing APK filename" }
-            val apkUrl = if (apkName.startsWith("http://") || apkName.startsWith("https://")) {
-                apkName
-            } else {
-                "$base/apk/$apkName"
+            val apkUrl = resolveApkUrl(extension)
+            val bytes = okHttpClient.newCall(Request.Builder().url(apkUrl).get().build()).execute().use { response ->
+                require(response.isSuccessful) { "APK download failed (HTTP ${response.code})" }
+                response.body.bytes()
             }
 
+            // Verify APK archive contains manifest & compiled dex before loading
+            var hasDex = false
+            var hasManifest = false
+            ZipInputStream(bytes.inputStream()).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (entry.name == "classes.dex" || entry.name.endsWith(".dex")) hasDex = true
+                    if (entry.name == "AndroidManifest.xml") hasManifest = true
+                    entry = zis.nextEntry
+                }
+            }
+            require(hasDex && hasManifest) { "Downloaded package is not a valid extension APK" }
+
+            val extDir = File(context.filesDir, "extensions").apply { mkdirs() }
+            val tempFile = File(extDir, "${extension.pkgName}.apk.tmp")
+            val finalFile = File(extDir, "${extension.pkgName}.apk")
+            if (finalFile.exists()) {
+                runCatching { finalFile.setWritable(true) }
+                finalFile.delete()
+            }
+            tempFile.writeBytes(bytes)
+            require(tempFile.renameTo(finalFile)) { "Could not write sandbox extension APK" }
+            finalFile.setReadOnly()
+
+            ExtensionInstallBridge.lastInstallError = null
+            ExtensionInstallBridge.onInstallSuccess?.invoke()
+        }
+    }
+
+    /** Optional OS-level system installation via Android PackageInstaller. */
+    suspend fun installSystemApk(extension: ExtensionInfo): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val apkUrl = resolveApkUrl(extension)
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
                 setAppPackageName(extension.pkgName)
@@ -156,9 +205,8 @@ class ExtensionRepoManager @Inject constructor(
             installer.openSession(sessionId).use { session ->
                 okHttpClient.newCall(Request.Builder().url(apkUrl).get().build()).execute().use { response ->
                     require(response.isSuccessful) { "APK download failed (HTTP ${response.code})" }
-                    val stream = response.body.byteStream()
                     session.openWrite("extension.apk", 0, -1).use { out ->
-                        stream.copyTo(out)
+                        response.body.byteStream().copyTo(out)
                         session.fsync(out)
                     }
                 }
@@ -176,21 +224,38 @@ class ExtensionRepoManager @Inject constructor(
         }
     }
 
-    fun requestUninstall(pkgName: String) {
-        val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkgName")).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun uninstallExtension(pkgName: String, isSandboxInstalled: Boolean) {
+        val sandboxFile = File(File(context.filesDir, "extensions"), "$pkgName.apk")
+        if (sandboxFile.exists()) {
+            runCatching { sandboxFile.setWritable(true) }
+            sandboxFile.delete()
+            ExtensionInstallBridge.onInstallSuccess?.invoke()
         }
-        context.startActivity(intent)
+        if (!isSandboxInstalled) {
+            val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkgName")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            runCatching { context.startActivity(intent) }
+        }
+    }
+
+    fun requestUninstall(pkgName: String) {
+        uninstallExtension(pkgName, isSandboxInstalled = false)
+    }
+
+    private fun resolveApkUrl(extension: ExtensionInfo): String {
+        extension.apkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let { return it }
+        val apkName = extension.apkName
+        if (!apkName.isNullOrBlank() && (apkName.startsWith("http://") || apkName.startsWith("https://"))) {
+            return apkName
+        }
+        val base = requireNotNull(extension.repoBaseUrl) { "Missing repository base URL" }
+        val name = requireNotNull(apkName) { "Missing APK filename" }
+        return "$base/apk/$name"
     }
 
     companion object {
-        fun normalizeRepoIndexUrl(raw: String): String {
-            val trimmed = raw.trim().trimEnd('/')
-            return if (trimmed.endsWith(".json", ignoreCase = true)) {
-                trimmed
-            } else {
-                "$trimmed/index.min.json"
-            }
-        }
+        fun normalizeRepoIndexUrl(raw: String): String =
+            RepoIndexDecoder.extractRepoInputUrl(raw).trimEnd('/')
     }
 }
