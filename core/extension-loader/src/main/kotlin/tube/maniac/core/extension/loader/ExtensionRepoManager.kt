@@ -187,6 +187,7 @@ class ExtensionRepoManager @Inject constructor(
 
             ExtensionInstallBridge.lastInstallError = null
             ExtensionInstallBridge.onInstallSuccess?.invoke()
+            Unit
         }
     }
 
