@@ -182,7 +182,6 @@ class ExtensionLoader @Inject constructor(
             hasConfigurablePreferences = loadedSources.any { it is ConfigurableSource },
             installState = ExtensionInstallState.INSTALLED,
             installedVersionCode = versionCode,
-            apkPath = apkPath,
             isSandboxInstalled = isSandbox,
         )
         return LoadedExtension(
