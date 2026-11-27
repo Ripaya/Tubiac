@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.source.model
 import android.net.Uri
 import kotlinx.serialization.json.JsonObject
 import java.io.Serializable
+import java.net.URI
 
 enum class UpdateStrategy {
     ALWAYS_UPDATE,
@@ -21,9 +22,15 @@ interface SManga : Serializable {
     var update_strategy: UpdateStrategy
     var initialized: Boolean
     var memo: JsonObject?
+        get() = null
+        set(_) {}
 
     fun getGenres(): List<String>? =
         genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct()
+
+    fun setUrlWithoutDomain(url: String) {
+        this.url = extractPathAndQuery(url)
+    }
 
     fun copyFrom(other: SManga) {
         if (other.author != null) author = other.author
@@ -49,7 +56,7 @@ interface SManga : Serializable {
     }
 }
 
-class SMangaImpl : SManga {
+open class SMangaImpl : SManga {
     override lateinit var url: String
     override lateinit var title: String
     override var artist: String? = null
@@ -61,6 +68,23 @@ class SMangaImpl : SManga {
     override var update_strategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE
     override var initialized: Boolean = false
     override var memo: JsonObject? = null
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is SMangaImpl) return false
+        return (if (::url.isInitialized) url else null) == (if (other::url.isInitialized) other.url else null) &&
+            (if (::title.isInitialized) title else null) == (if (other::title.isInitialized) other.title else null) &&
+            status == other.status &&
+            update_strategy == other.update_strategy
+    }
+
+    override fun hashCode(): Int {
+        var result = if (::url.isInitialized) url.hashCode() else 0
+        result = 31 * result + (if (::title.isInitialized) title.hashCode() else 0)
+        result = 31 * result + status
+        result = 31 * result + update_strategy.hashCode()
+        return result
+    }
 }
 
 interface SChapter : Serializable {
@@ -70,6 +94,12 @@ interface SChapter : Serializable {
     var chapter_number: Float
     var scanlator: String?
     var memo: JsonObject?
+        get() = null
+        set(_) {}
+
+    fun setUrlWithoutDomain(url: String) {
+        this.url = extractPathAndQuery(url)
+    }
 
     fun copyFrom(other: SChapter) {
         name = other.name
@@ -85,13 +115,41 @@ interface SChapter : Serializable {
     }
 }
 
-class SChapterImpl : SChapter {
+open class SChapterImpl : SChapter {
     override lateinit var url: String
     override lateinit var name: String
     override var date_upload: Long = 0L
     override var chapter_number: Float = -1f
     override var scanlator: String? = null
     override var memo: JsonObject? = null
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is SChapterImpl) return false
+        return (if (::url.isInitialized) url else null) == (if (other::url.isInitialized) other.url else null) &&
+            (if (::name.isInitialized) name else null) == (if (other::name.isInitialized) other.name else null) &&
+            chapter_number == other.chapter_number
+    }
+
+    override fun hashCode(): Int {
+        var result = if (::url.isInitialized) url.hashCode() else 0
+        result = 31 * result + (if (::name.isInitialized) name.hashCode() else 0)
+        result = 31 * result + chapter_number.hashCode()
+        return result
+    }
+}
+
+private fun extractPathAndQuery(orig: String): String {
+    return try {
+        val parsed = URI(orig)
+        buildString {
+            append(parsed.rawPath.orEmpty().ifEmpty { "/" })
+            if (!parsed.rawQuery.isNullOrEmpty()) append("?${parsed.rawQuery}")
+            if (!parsed.rawFragment.isNullOrEmpty()) append("#${parsed.rawFragment}")
+        }
+    } catch (_: Exception) {
+        orig
+    }
 }
 
 data class SMangaUpdate(
@@ -112,15 +170,50 @@ open class Page(
 ) {
     val number: Int
         get() = index + 1
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Page) return false
+        return index == other.index && url == other.url && imageUrl == other.imageUrl && uri == other.uri
+    }
+
+    override fun hashCode(): Int {
+        var result = index
+        result = 31 * result + url.hashCode()
+        result = 31 * result + (imageUrl?.hashCode() ?: 0)
+        result = 31 * result + (uri?.hashCode() ?: 0)
+        return result
+    }
 }
 
+/**
+ * Filter hierarchy ABI-aligned with Mihon/Tachiyomi extensions-lib.
+ * All concrete subclasses remain open (never final) so dynamically loaded extensions
+ * can either instantiate or subclass any Filter type without VerifyError.
+ */
 sealed class Filter<T>(val name: String, var state: T) {
     open class Header(name: String) : Filter<Any>(name, 0)
     open class Separator(name: String = "") : Filter<Any>(name, 0)
-    abstract class Select<V>(name: String, val values: Array<V>, state: Int = 0) : Filter<Int>(name, state)
-    abstract class Text(name: String, state: String = "") : Filter<String>(name, state)
-    abstract class CheckBox(name: String, state: Boolean = false) : Filter<Boolean>(name, state)
-    abstract class TriState(name: String, state: Int = STATE_IGNORE) : Filter<Int>(name, state) {
+
+    open class Select<V>(name: String, val values: Array<V>, state: Int = 0) : Filter<Int>(name, state) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+            other as Select<*>
+            return name == other.name && state == other.state && values.contentEquals(other.values)
+        }
+
+        override fun hashCode(): Int {
+            var result = super.hashCode()
+            result = 31 * result + values.contentHashCode()
+            return result
+        }
+    }
+
+    open class Text(name: String, state: String = "") : Filter<String>(name, state)
+    open class CheckBox(name: String, state: Boolean = false) : Filter<Boolean>(name, state)
+
+    open class TriState(name: String, state: Int = STATE_IGNORE) : Filter<Int>(name, state) {
         fun isIgnored(): Boolean = state == STATE_IGNORE
         fun isIncluded(): Boolean = state == STATE_INCLUDE
         fun isExcluded(): Boolean = state == STATE_EXCLUDE
@@ -131,13 +224,52 @@ sealed class Filter<T>(val name: String, var state: T) {
             const val STATE_EXCLUDE = 2
         }
     }
-    abstract class Group<V>(name: String, state: List<V>) : Filter<List<V>>(name, state)
-    abstract class Sort(name: String, val values: Array<String>, state: Selection? = null) :
+
+    open class Group<V>(name: String, state: List<V>) : Filter<List<V>>(name, state)
+
+    open class Sort(name: String, val values: Array<String>, state: Selection? = null) :
         Filter<Sort.Selection?>(name, state) {
         data class Selection(val index: Int, val ascending: Boolean)
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+            other as Sort
+            return name == other.name && state == other.state && values.contentEquals(other.values)
+        }
+
+        override fun hashCode(): Int {
+            var result = super.hashCode()
+            result = 31 * result + values.contentHashCode()
+            return result
+        }
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as Filter<*>
+        return name == other.name && state == other.state
+    }
+
+    override fun hashCode(): Int {
+        var result = name.hashCode()
+        result = 31 * result + (state?.hashCode() ?: 0)
+        return result
     }
 }
 
 data class FilterList(val list: List<Filter<*>>) : List<Filter<*>> by list {
     constructor(vararg fs: Filter<*>) : this(fs.asList())
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        return when (other) {
+            is FilterList -> list == other.list
+            is List<*> -> list == other
+            else -> false
+        }
+    }
+
+    override fun hashCode(): Int = list.hashCode()
 }

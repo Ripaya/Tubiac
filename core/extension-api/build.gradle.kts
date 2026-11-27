@@ -38,5 +38,8 @@ dependencies {
     api(libs.androidx.preference.ktx)
     api(libs.kotlinx.serialization.json)
     api(libs.kotlinx.serialization.json.okio)
+    api(libs.kotlinx.serialization.protobuf)
     implementation(libs.kotlinx.coroutines.core)
+
+    testImplementation(libs.junit)
 }

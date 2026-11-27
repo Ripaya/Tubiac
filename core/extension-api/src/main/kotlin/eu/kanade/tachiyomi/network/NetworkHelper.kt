@@ -1,24 +1,27 @@
 package eu.kanade.tachiyomi.network
 
+import android.content.Context
 import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
 import okhttp3.CookieJar
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
-class NetworkHelper {
-    val client: OkHttpClient
+open class NetworkHelper() {
+    constructor(@Suppress("UNUSED_PARAMETER") context: Context) : this()
+
+    open val client: OkHttpClient
         get() = ExtensionNetworkBridge.sharedClient
 
-    val cloudflareClient: OkHttpClient
+    open val cloudflareClient: OkHttpClient
         get() = ExtensionNetworkBridge.sharedClient
 
-    val cookieJar: CookieJar
+    open val cookieJar: CookieJar
         get() = client.cookieJar
 
-    val headers: Headers
+    open val headers: Headers
         get() = Headers.Builder()
             .add("User-Agent", defaultUserAgentProvider())
             .build()
 
-    fun defaultUserAgentProvider(): String = ExtensionNetworkBridge.userAgentProvider()
+    open fun defaultUserAgentProvider(): String = ExtensionNetworkBridge.userAgentProvider()
 }

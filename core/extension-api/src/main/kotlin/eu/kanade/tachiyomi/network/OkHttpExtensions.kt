@@ -9,6 +9,8 @@ import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Response
 import rx.Observable
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -54,5 +56,11 @@ suspend fun Call.awaitSuccess(): Response {
 inline fun <reified T> Response.parseAs(json: Json): T =
     use { json.decodeFromString(it.body.string()) }
 
+inline fun <reified T> Response.parseAs(): T =
+    parseAs(Injekt.get())
+
 inline fun <reified T> String.parseAs(json: Json): T =
     json.decodeFromString(this)
+
+inline fun <reified T> String.parseAs(): T =
+    parseAs(Injekt.get())

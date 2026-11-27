@@ -135,41 +135,54 @@ class ExtensionLoader @Inject constructor(
             @Suppress("DEPRECATION")
             pkgInfo.versionCode.toLong()
         }
+        val versionName = pkgInfo.versionName ?: "1.0.0"
+        val libVersion = extractLibVersion(meta, versionName)
 
         val apkPath = appInfo.sourceDir ?: return null
         val nativeLibDir = appInfo.nativeLibraryDir
         val loadedSources = mutableListOf<Source>()
         val errors = mutableListOf<String>()
 
-        runCatching {
-            val classLoader = PathClassLoader(apkPath, nativeLibDir, context.classLoader)
-            classNamesRaw.split(";").map { it.trim() }.filter { it.isNotBlank() }.forEach { rawName ->
-                val fqcn = if (rawName.startsWith(".")) "$pkgName$rawName" else rawName
-                runCatching {
-                    val clazz = Class.forName(fqcn, false, classLoader)
-                    when (val instance = clazz.getDeclaredConstructor().newInstance()) {
-                        is Source -> loadedSources.add(instance)
-                        is SourceFactory -> loadedSources.addAll(instance.createSources())
+        if (libVersion != null && !isSupportedLibVersion(libVersion)) {
+            errors.add("Unsupported extension libVersion $libVersion (expected $MIN_LIB_VERSION..$MAX_LIB_VERSION)")
+        } else {
+            runCatching {
+                val parentLoader = context.applicationContext?.classLoader ?: context.classLoader
+                val classLoader = PathClassLoader(apkPath, nativeLibDir, parentLoader)
+                classNamesRaw.split(";")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .forEach { rawName ->
+                        val fqcn = if (rawName.startsWith(".")) "$pkgName$rawName" else rawName
+                        try {
+                            val clazz = Class.forName(fqcn, false, classLoader)
+                            when (val instance = clazz.getDeclaredConstructor().newInstance()) {
+                                is Source -> loadedSources.add(instance)
+                                is SourceFactory -> loadedSources.addAll(instance.createSources())
+                                else -> errors.add("$fqcn: Unknown extension entry type ${instance.javaClass.name}")
+                            }
+                        } catch (err: Throwable) {
+                            val cause = err.cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: ""
+                            errors.add("$fqcn: ${err.javaClass.simpleName}: ${err.message ?: ""} $cause".trim())
+                        }
                     }
-                }.onFailure { err ->
-                    val cause = err.cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: ""
-                    errors.add("$fqcn: ${err.javaClass.simpleName}: ${err.message ?: ""} $cause".trim())
-                }
+            }.onFailure { err ->
+                errors.add("ClassLoader: ${err.javaClass.simpleName}: ${err.message ?: err.javaClass.simpleName}")
             }
-        }.onFailure { err ->
-            errors.add("ClassLoader: ${err.javaClass.simpleName}: ${err.message}")
         }
 
         val info = ExtensionInfo(
             pkgName = pkgName,
             name = label,
             lang = lang,
-            versionName = pkgInfo.versionName ?: "1.0.0",
+            versionName = versionName,
             versionCode = versionCode,
+            libVersion = libVersion,
             isNsfw = isNsfw,
             hasConfigurablePreferences = loadedSources.any { it is ConfigurableSource },
             installState = ExtensionInstallState.INSTALLED,
             installedVersionCode = versionCode,
+            apkPath = apkPath,
             isSandboxInstalled = isSandbox,
         )
         return LoadedExtension(
@@ -184,11 +197,31 @@ class ExtensionLoader @Inject constructor(
         return if (parts.size >= 4) parts[3] else "all"
     }
 
+    private fun extractLibVersion(meta: android.os.Bundle, versionName: String): String? {
+        val explicit = meta.getString(META_EXTENSION_LIB)?.takeIf { it.isNotBlank() }
+            ?: meta.getString(META_TACHIYOMIX_LIB)?.takeIf { it.isNotBlank() }
+        if (explicit != null) return explicit
+        val segments = versionName.split(".")
+        return if (segments.size >= 2) "${segments[0]}.${segments[1]}" else null
+    }
+
+    private fun isSupportedLibVersion(rawVersion: String): Boolean {
+        val parts = rawVersion.split(".")
+        val major = parts.getOrNull(0)?.toIntOrNull() ?: return true
+        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val value = major + (minor / 10.0)
+        return value in MIN_LIB_VERSION..MAX_LIB_VERSION
+    }
+
     companion object {
         const val EXTENSION_FEATURE = "tachiyomi.extension"
         const val META_EXTENSION_CLASS = "tachiyomi.extension.class"
         const val META_EXTENSION_NSFW = "tachiyomi.extension.nsfw"
+        const val META_EXTENSION_LIB = "tachiyomi.extension.lib"
+        const val META_TACHIYOMIX_LIB = "tachiyomix.extensionLib"
         const val META_CONTENT_WARNING = "tachiyomix.contentWarning"
         const val META_TACHIYOMIX_NAME = "tachiyomix.name"
+        const val MIN_LIB_VERSION = 1.3
+        const val MAX_LIB_VERSION = 1.6
     }
 }

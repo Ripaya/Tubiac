@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 import tube.maniac.core.database.entity.CategoryEntity
@@ -57,8 +58,25 @@ interface SeriesDao {
     @Query("SELECT * FROM series WHERE in_library = 1 AND reading_status = :status ORDER BY title ASC")
     fun observeByReadingStatus(status: ReadingStatus): Flow<List<SeriesEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(series: SeriesEntity): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(series: SeriesEntity): Long
+
+    /**
+     * Updates in-place instead of SQLite REPLACE so ON DELETE CASCADE foreign keys on
+     * chapters, categories, and tags are never wiped on metadata/AniList/backup sync.
+     */
+    @Transaction
+    suspend fun upsert(series: SeriesEntity): Long {
+        val existing = if (series.id != 0L) getById(series.id) else null
+        val target = existing ?: getBySourceAndUrl(series.sourceId, series.url)
+        return if (target != null) {
+            update(series.copy(id = target.id))
+            target.id
+        } else {
+            val inserted = insertIgnore(series)
+            if (inserted != -1L) inserted else getBySourceAndUrl(series.sourceId, series.url)?.id ?: -1L
+        }
+    }
 
     @Update
     suspend fun update(series: SeriesEntity)
@@ -101,8 +119,28 @@ interface ChapterDao {
     @Query("SELECT COUNT(*) FROM chapters WHERE series_id = :seriesId AND downloaded = 1")
     suspend fun countDownloaded(seriesId: Long): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertAll(chapters: List<ChapterEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnoreAll(chapters: List<ChapterEntity>): List<Long>
+
+    @Transaction
+    suspend fun upsertAll(chapters: List<ChapterEntity>) {
+        if (chapters.isEmpty()) return
+        chapters.groupBy { it.seriesId }.forEach { (seriesId, group) ->
+            val existingByUrl = getBySeries(seriesId).associateBy { it.url }
+            val toInsert = mutableListOf<ChapterEntity>()
+            group.forEach { chapter ->
+                val current = existingByUrl[chapter.url]
+                if (current != null) {
+                    update(chapter.copy(id = current.id))
+                } else {
+                    toInsert.add(chapter)
+                }
+            }
+            if (toInsert.isNotEmpty()) {
+                insertIgnoreAll(toInsert)
+            }
+        }
+    }
 
     @Update
     suspend fun update(chapter: ChapterEntity)
@@ -111,10 +149,22 @@ interface ChapterDao {
     suspend fun updateProgress(chapterId: Long, read: Boolean, lastPageRead: Int, totalPages: Int)
 
     @Query("UPDATE chapters SET read = :read WHERE id IN (:chapterIds)")
-    suspend fun setReadBatch(chapterIds: List<Long>, read: Boolean)
+    suspend fun setReadBatchChunk(chapterIds: List<Long>, read: Boolean)
+
+    @Transaction
+    suspend fun setReadBatch(chapterIds: List<Long>, read: Boolean) {
+        if (chapterIds.isEmpty()) return
+        chapterIds.chunked(450).forEach { chunk -> setReadBatchChunk(chunk, read) }
+    }
 
     @Query("UPDATE chapters SET bookmark = :bookmark WHERE id IN (:chapterIds)")
-    suspend fun setBookmarkBatch(chapterIds: List<Long>, bookmark: Boolean)
+    suspend fun setBookmarkBatchChunk(chapterIds: List<Long>, bookmark: Boolean)
+
+    @Transaction
+    suspend fun setBookmarkBatch(chapterIds: List<Long>, bookmark: Boolean) {
+        if (chapterIds.isEmpty()) return
+        chapterIds.chunked(450).forEach { chunk -> setBookmarkBatchChunk(chunk, bookmark) }
+    }
 
     @Query("UPDATE chapters SET downloaded = :downloaded WHERE id = :chapterId")
     suspend fun setDownloaded(chapterId: Long, downloaded: Boolean)
@@ -137,8 +187,27 @@ interface CategoryDao {
     @Query("SELECT category_id FROM series_categories WHERE series_id = :seriesId")
     suspend fun getCategoryIdsForSeries(seriesId: Long): List<Long>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(category: CategoryEntity): Long
+    @Query("SELECT * FROM categories WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): CategoryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(category: CategoryEntity): Long
+
+    @Update
+    suspend fun update(category: CategoryEntity)
+
+    @Transaction
+    suspend fun upsert(category: CategoryEntity): Long {
+        val existing = (if (category.id != 0L) getAll().firstOrNull { it.id == category.id } else null)
+            ?: getByName(category.name)
+        return if (existing != null) {
+            update(category.copy(id = existing.id))
+            existing.id
+        } else {
+            val inserted = insertIgnore(category)
+            if (inserted != -1L) inserted else getByName(category.name)?.id ?: -1L
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun assignSeriesToCategory(crossRef: SeriesCategoryCrossRef)
@@ -167,8 +236,27 @@ interface TagDao {
     @Query("SELECT tag_id FROM series_tags WHERE series_id = :seriesId")
     suspend fun getTagIdsForSeries(seriesId: Long): List<Long>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(tag: TagEntity): Long
+    @Query("SELECT * FROM tags WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): TagEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(tag: TagEntity): Long
+
+    @Update
+    suspend fun update(tag: TagEntity)
+
+    @Transaction
+    suspend fun upsert(tag: TagEntity): Long {
+        val existing = (if (tag.id != 0L) getAll().firstOrNull { it.id == tag.id } else null)
+            ?: getByName(tag.name)
+        return if (existing != null) {
+            update(tag.copy(id = existing.id))
+            existing.id
+        } else {
+            val inserted = insertIgnore(tag)
+            if (inserted != -1L) inserted else getByName(tag.name)?.id ?: -1L
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun assignSeriesToTag(crossRef: SeriesTagCrossRef)

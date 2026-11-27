@@ -58,6 +58,7 @@ class WebViewCookieJar @Inject constructor() : CookieJar {
     }.getOrNull()
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        if (cookies.isEmpty()) return
         val urlString = url.toString()
         val manager = cookieManagerOrNull()
         if (manager != null) {
@@ -76,7 +77,7 @@ class WebViewCookieJar @Inject constructor() : CookieJar {
             val rawCookies = manager.getCookie(url.toString()).orEmpty()
             if (rawCookies.isBlank()) return emptyList()
             return rawCookies.split(";")
-                .mapNotNull { Cookie.parse(url, it.trim()) }
+                .mapNotNull { token -> runCatching { Cookie.parse(url, token.trim()) }.getOrNull() }
         }
         return memoryFallback[url.host].orEmpty()
     }
@@ -114,7 +115,16 @@ class CloudflareDetectorInterceptor : Interceptor {
         if (response.code == 403 || response.code == 451 || response.code == 503) {
             val server = response.header("Server").orEmpty().lowercase()
             val cfMitigated = response.header("cf-mitigated").orEmpty().lowercase()
-            val bodySnippet = runCatching { response.peekBody(8192).string().lowercase() }.getOrDefault("")
+            val contentType = response.header("Content-Type").orEmpty().lowercase()
+            val isHtmlLike = contentType.isEmpty() ||
+                contentType.contains("html") ||
+                contentType.contains("text") ||
+                contentType.contains("json")
+            val bodySnippet = if (isHtmlLike) {
+                runCatching { response.peekBody(8192).string().lowercase() }.getOrDefault("")
+            } else {
+                ""
+            }
 
             val isHardBlock = bodySnippet.contains("sorry, you have been blocked") ||
                 bodySnippet.contains("you are unable to access") ||

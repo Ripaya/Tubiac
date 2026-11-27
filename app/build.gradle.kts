@@ -161,6 +161,13 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.serialization.protobuf)
+    implementation(libs.rxjava)
+    implementation(libs.jsoup)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.brotli)
+    implementation(libs.okhttp.zstd)
+    implementation(libs.androidx.preference.ktx)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

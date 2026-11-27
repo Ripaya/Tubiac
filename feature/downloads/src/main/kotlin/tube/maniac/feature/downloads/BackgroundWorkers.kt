@@ -86,8 +86,13 @@ class DownloadWorker @AssistedInject constructor(
                 val doneCount = AtomicInteger(0)
                 downloadDao.updateProgress(task.id, 0, total, DownloadState.DOWNLOADING)
 
+                val downloadsDir = (applicationContext.getExternalFilesDir("downloads")
+                    ?: File(applicationContext.filesDir, "downloads")).apply {
+                    mkdirs()
+                    runCatching { File(this, ".nomedia").apply { if (!exists()) createNewFile() } }
+                }
                 val chapterHash = sha256Short("${task.sourceId}_${task.seriesId}_${task.chapterId}")
-                val outputRoot = File(applicationContext.getExternalFilesDir("downloads"), chapterHash).apply {
+                val outputRoot = File(downloadsDir, chapterHash).apply {
                     mkdirs()
                 }
 
@@ -100,14 +105,22 @@ class DownloadWorker @AssistedInject constructor(
                                     page.imageUrl = httpSource.getImageUrl(page)
                                 }
                                 val url = page.imageUrl ?: page.url
-                                val file = File(outputRoot, String.format(java.util.Locale.US, "%04d_%s.jpg", idx, sha256Short(url)))
                                 val pageRequest = httpSource?.let { runCatching { it.imageRequest(page) }.getOrNull() }
                                     ?: Request.Builder().url(url).get().build()
-                                okHttpClient.newCall(pageRequest).execute().use { resp ->
+                                val finalFile = okHttpClient.newCall(pageRequest).execute().use { resp ->
                                     if (!resp.isSuccessful) error("HTTP ${resp.code} fetching page ${idx + 1}")
+                                    val ext = extensionFromMime(resp.header("Content-Type"), url)
+                                    val targetFile = File(outputRoot, String.format(java.util.Locale.US, "%04d_%s.%s", idx, sha256Short(url), ext))
+                                    val tmpFile = File(outputRoot, "${targetFile.name}.tmp")
                                     resp.body.byteStream().use { input ->
-                                        FileOutputStream(file).use { out -> input.copyTo(out) }
+                                        FileOutputStream(tmpFile).use { out -> input.copyTo(out) }
                                     }
+                                    if (targetFile.exists()) targetFile.delete()
+                                    if (!tmpFile.renameTo(targetFile)) {
+                                        tmpFile.copyTo(targetFile, overwrite = true)
+                                        tmpFile.delete()
+                                    }
+                                    targetFile
                                 }
                                 downloadDao.updateProgress(
                                     task.id,
@@ -115,22 +128,33 @@ class DownloadWorker @AssistedInject constructor(
                                     total,
                                     DownloadState.DOWNLOADING,
                                 )
-                                file
+                                finalFile
                             }
                         }
                     }.awaitAll()
                 }
 
                 if (settings.downloadStorageFormat == DownloadStorageFormat.CBZ_ARCHIVE) {
-                    val cbzFile = File(applicationContext.getExternalFilesDir("downloads"), "$chapterHash.cbz")
-                    ZipOutputStream(FileOutputStream(cbzFile)).use { zos ->
-                        downloadedFiles.sortedBy { it.name }.forEach { img ->
-                            zos.putNextEntry(ZipEntry(img.name))
-                            img.inputStream().use { it.copyTo(zos) }
-                            zos.closeEntry()
+                    val cbzFile = File(downloadsDir, "$chapterHash.cbz")
+                    val tmpCbz = File(downloadsDir, "$chapterHash.cbz.tmp")
+                    try {
+                        ZipOutputStream(FileOutputStream(tmpCbz)).use { zos ->
+                            downloadedFiles.sortedBy { it.name }.forEach { img ->
+                                zos.putNextEntry(ZipEntry(img.name))
+                                img.inputStream().use { it.copyTo(zos) }
+                                zos.closeEntry()
+                            }
                         }
+                        if (cbzFile.exists()) cbzFile.delete()
+                        if (!tmpCbz.renameTo(cbzFile)) {
+                            tmpCbz.copyTo(cbzFile, overwrite = true)
+                            tmpCbz.delete()
+                        }
+                        outputRoot.deleteRecursively()
+                    } catch (err: Throwable) {
+                        tmpCbz.delete()
+                        throw err
                     }
-                    outputRoot.deleteRecursively()
                 }
 
                 chapterDao.setDownloaded(task.chapterId, true)
@@ -145,6 +169,19 @@ class DownloadWorker @AssistedInject constructor(
             }
         }
         return Result.success()
+    }
+
+    private fun extensionFromMime(contentType: String?, url: String): String {
+        val mime = contentType.orEmpty().lowercase()
+        return when {
+            mime.contains("png") -> "png"
+            mime.contains("webp") -> "webp"
+            mime.contains("avif") -> "avif"
+            mime.contains("gif") -> "gif"
+            url.substringBefore('?').endsWith(".png", ignoreCase = true) -> "png"
+            url.substringBefore('?').endsWith(".webp", ignoreCase = true) -> "webp"
+            else -> "jpg"
+        }
     }
 
     private fun sha256Short(input: String): String =
@@ -253,10 +290,22 @@ class AutoBackupWorker @AssistedInject constructor(
         val settings = settingsRepository.currentSettings()
         if (settings.autoBackupFrequency == AutoBackupFrequency.OFF) return Result.success()
 
-        val backupDir = File(applicationContext.getExternalFilesDir("backups"), "auto").apply { mkdirs() }
-        val file = File(backupDir, "tubiac_${System.currentTimeMillis()}.tachibk")
-        FileOutputStream(file).use { out ->
-            backupManager.exportBackup(BackupFormat.TACHIBK_GZIP, out)
+        val backupsBase = applicationContext.getExternalFilesDir("backups")
+            ?: File(applicationContext.filesDir, "backups")
+        val backupDir = File(backupsBase, "auto").apply { mkdirs() }
+        val targetFile = File(backupDir, "tubiac_${System.currentTimeMillis()}.tachibk")
+        val tmpFile = File(backupDir, "${targetFile.name}.tmp")
+        try {
+            FileOutputStream(tmpFile).use { out ->
+                backupManager.exportBackup(BackupFormat.TACHIBK_GZIP, out)
+            }
+            if (!tmpFile.renameTo(targetFile)) {
+                tmpFile.copyTo(targetFile, overwrite = true)
+                tmpFile.delete()
+            }
+        } catch (err: Throwable) {
+            tmpFile.delete()
+            throw err
         }
 
         val existing = backupDir.listFiles()?.sortedByDescending { it.lastModified() }.orEmpty()

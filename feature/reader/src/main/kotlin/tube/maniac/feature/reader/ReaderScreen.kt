@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -56,6 +57,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +80,8 @@ import androidx.lifecycle.viewModelScope
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
+import coil3.size.Precision
+import coil3.size.Scale
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -243,8 +247,25 @@ class ReaderViewModel @Inject constructor(
         val clamped = pageIndex.coerceIn(0, total - 1)
         _uiState.value = state.copy(currentPageIndex = clamped)
 
+        val threshold = state.preferences.autoMarkReadThresholdPercent.coerceIn(1, 100)
         val percent = ((clamped + 1) * 100) / total
-        val markedRead = chapter.read || percent >= state.preferences.autoMarkReadThresholdPercent
+        val newlyRead = !chapter.read && percent >= threshold
+        val markedRead = chapter.read || newlyRead
+
+        val updatedChapter = if (newlyRead) {
+            chapter.copy(read = true, lastPageRead = clamped, totalPages = total)
+        } else {
+            chapter.copy(lastPageRead = clamped, totalPages = total)
+        }
+        _uiState.value = _uiState.value.copy(
+            chapter = updatedChapter,
+            chapters = if (newlyRead) {
+                state.chapters.map { if (it.id == chapter.id) updatedChapter else it }
+            } else {
+                state.chapters
+            },
+            currentPageIndex = clamped,
+        )
 
         viewModelScope.launch(Dispatchers.IO) {
             if (!state.incognitoMode) {
@@ -264,7 +285,7 @@ class ReaderViewModel @Inject constructor(
                         totalPages = total,
                     ),
                 )
-                if (markedRead && !chapter.read) {
+                if (newlyRead) {
                     val completedCount = state.chapters.count { it.read } + 1
                     val token = settingsRepository.anilistTokenFlow.first()
                     aniListSyncEngine.pushSeriesProgress(series, completedCount, emptyList(), token)
@@ -331,7 +352,8 @@ class ReaderViewModel @Inject constructor(
         seriesId: Long,
         chapterId: Long,
     ): List<ReaderPageItem> {
-        val downloadsRoot = context.getExternalFilesDir("downloads") ?: return emptyList()
+        val downloadsRoot = context.getExternalFilesDir("downloads")
+            ?: File(context.filesDir, "downloads")
         val chapterHash = MessageDigest.getInstance("SHA-256")
             .digest("${sourceId}_${seriesId}_$chapterId".toByteArray())
             .take(6)
@@ -345,7 +367,9 @@ class ReaderViewModel @Inject constructor(
                     ZipInputStream(input).use { zis ->
                         var entry = zis.nextEntry
                         while (entry != null) {
-                            if (!entry.isDirectory) entries.add(entry.name)
+                            if (!entry.isDirectory && !entry.name.contains("..")) {
+                                entries.add(entry.name)
+                            }
                             entry = zis.nextEntry
                         }
                     }
@@ -359,7 +383,10 @@ class ReaderViewModel @Inject constructor(
 
         val rawDir = File(downloadsRoot, chapterHash)
         if (rawDir.isDirectory) {
-            val files = rawDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name }.orEmpty()
+            val files = rawDir.listFiles()
+                ?.filter { it.isFile && !it.name.startsWith(".") && !it.name.endsWith(".tmp") }
+                ?.sortedBy { it.name }
+                .orEmpty()
             return files.mapIndexed { idx, file ->
                 ReaderPageItem(idx, Uri.fromFile(file).toString())
             }
@@ -368,15 +395,26 @@ class ReaderViewModel @Inject constructor(
     }
 }
 
-private fun buildPageImageModel(context: Context, page: ReaderPageItem): Any {
-    if (page.headers.isEmpty()) return page.imageUrl
-    val nh = NetworkHeaders.Builder().apply {
-        page.headers.forEach { (k, v) -> set(k, v) }
-    }.build()
-    return ImageRequest.Builder(context)
+private fun buildPageImageModel(
+    context: Context,
+    page: ReaderPageItem,
+    limitWebtoonStripHeight: Boolean = false,
+): ImageRequest {
+    val builder = ImageRequest.Builder(context)
         .data(page.imageUrl)
-        .httpHeaders(nh)
-        .build()
+    if (page.headers.isNotEmpty()) {
+        val nh = NetworkHeaders.Builder().apply {
+            page.headers.forEach { (k, v) -> set(k, v) }
+        }.build()
+        builder.httpHeaders(nh)
+    }
+    if (limitWebtoonStripHeight) {
+        val maxW = context.resources.displayMetrics.widthPixels.coerceAtLeast(1080) * 2
+        builder.size(maxW, 4096)
+            .precision(Precision.INEXACT)
+            .scale(Scale.FIT)
+    }
+    return builder.build()
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -462,134 +500,142 @@ fun ReaderScreen(
                 }
             }
         } else if (pages.isNotEmpty()) {
-            when (state.activeMode) {
-                ReaderMode.WEBTOON, ReaderMode.CONTINUOUS_VERTICAL -> {
-                    val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.currentPageIndex)
-                    val sidePad = (state.preferences.webtoonSidePaddingPercent * 2).dp
-                    val itemGap = if (state.activeMode == ReaderMode.WEBTOON) 0.dp else 10.dp
+            val activeChapterId = state.chapter?.id ?: chapterId
+            LaunchedEffect(activeChapterId) {
+                seekRequest = null
+            }
+            key(activeChapterId, state.activeMode) {
+                when (state.activeMode) {
+                    ReaderMode.WEBTOON, ReaderMode.CONTINUOUS_VERTICAL -> {
+                        val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.currentPageIndex)
+                        val sidePad = (state.preferences.webtoonSidePaddingPercent * 2).dp
+                        val itemGap = if (state.activeMode == ReaderMode.WEBTOON) 0.dp else 10.dp
 
-                    LaunchedEffect(listState.firstVisibleItemIndex) {
-                        viewModel.onPageChanged(listState.firstVisibleItemIndex)
-                    }
-                    LaunchedEffect(seekRequest) {
-                        seekRequest?.let { (target, _) ->
-                            listState.scrollToItem(target.coerceIn(0, pages.lastIndex))
+                        LaunchedEffect(listState.firstVisibleItemIndex) {
+                            viewModel.onPageChanged(listState.firstVisibleItemIndex)
                         }
-                    }
+                        LaunchedEffect(seekRequest) {
+                            seekRequest?.let { (target, _) ->
+                                listState.scrollToItem(target.coerceIn(0, pages.lastIndex))
+                                seekRequest = null
+                            }
+                        }
 
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(state.preferences.tapZonePreset) {
-                                detectTapGestures { offset ->
-                                    val action = TapZoneResolver.resolve(
-                                        normalizedX = offset.x / size.width.coerceAtLeast(1),
-                                        normalizedY = offset.y / size.height.coerceAtLeast(1),
-                                        preset = state.preferences.tapZonePreset,
-                                        isRtl = false,
-                                    )
-                                    when (action) {
-                                        ReaderTapAction.TOGGLE_MENU -> showOverlay = !showOverlay
-                                        ReaderTapAction.NEXT -> scope.launch {
-                                            listState.animateScrollToItem(
-                                                (listState.firstVisibleItemIndex + 1).coerceAtMost(pages.lastIndex),
-                                            )
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(state.preferences.tapZonePreset) {
+                                    detectTapGestures { offset ->
+                                        val action = TapZoneResolver.resolve(
+                                            normalizedX = offset.x / size.width.coerceAtLeast(1),
+                                            normalizedY = offset.y / size.height.coerceAtLeast(1),
+                                            preset = state.preferences.tapZonePreset,
+                                            isRtl = false,
+                                        )
+                                        when (action) {
+                                            ReaderTapAction.TOGGLE_MENU -> showOverlay = !showOverlay
+                                            ReaderTapAction.NEXT -> scope.launch {
+                                                listState.animateScrollToItem(
+                                                    (listState.firstVisibleItemIndex + 1).coerceAtMost(pages.lastIndex),
+                                                )
+                                            }
+                                            ReaderTapAction.PREVIOUS -> scope.launch {
+                                                listState.animateScrollToItem(
+                                                    (listState.firstVisibleItemIndex - 1).coerceAtLeast(0),
+                                                )
+                                            }
+                                            ReaderTapAction.NONE -> Unit
                                         }
-                                        ReaderTapAction.PREVIOUS -> scope.launch {
-                                            listState.animateScrollToItem(
-                                                (listState.firstVisibleItemIndex - 1).coerceAtLeast(0),
-                                            )
-                                        }
-                                        ReaderTapAction.NONE -> Unit
                                     }
-                                }
-                            },
-                        contentPadding = PaddingValues(horizontal = sidePad),
-                        verticalArrangement = Arrangement.spacedBy(itemGap),
-                    ) {
-                        itemsIndexed(pages, key = { _, p -> p.index }) { _, page ->
-                            ZoomableAsyncImage(
-                                model = buildPageImageModel(context, page),
-                                contentDescription = "Page ${page.index + 1}",
-                                contentScale = ContentScale.FillWidth,
-                                colorFilter = colorFilter,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-                }
-
-                ReaderMode.LTR, ReaderMode.RTL, ReaderMode.DOUBLE_PAGE_SPREAD -> {
-                    val isRtl = state.activeMode == ReaderMode.RTL
-                    val spreadMode = state.activeMode == ReaderMode.DOUBLE_PAGE_SPREAD
-                    val displayUnits = remember(pages, spreadMode) {
-                        if (spreadMode) pages.chunked(2) else pages.map { listOf(it) }
-                    }
-                    val pagerState = rememberPagerState(
-                        initialPage = (state.currentPageIndex / if (spreadMode) 2 else 1)
-                            .coerceIn(0, (displayUnits.size - 1).coerceAtLeast(0)),
-                        pageCount = { displayUnits.size },
-                    )
-
-                    LaunchedEffect(pagerState.currentPage) {
-                        val firstPage = displayUnits.getOrNull(pagerState.currentPage)?.firstOrNull()?.index ?: 0
-                        viewModel.onPageChanged(firstPage)
-                    }
-                    LaunchedEffect(seekRequest, spreadMode) {
-                        seekRequest?.let { (target, _) ->
-                            val targetUnit = (target / if (spreadMode) 2 else 1)
-                                .coerceIn(0, (displayUnits.size - 1).coerceAtLeast(0))
-                            pagerState.scrollToPage(targetUnit)
-                        }
-                    }
-
-                    HorizontalPager(
-                        state = pagerState,
-                        reverseLayout = isRtl,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(state.preferences.tapZonePreset, isRtl) {
-                                detectTapGestures { offset ->
-                                    val action = TapZoneResolver.resolve(
-                                        normalizedX = offset.x / size.width.coerceAtLeast(1),
-                                        normalizedY = offset.y / size.height.coerceAtLeast(1),
-                                        preset = state.preferences.tapZonePreset,
-                                        isRtl = isRtl,
-                                    )
-                                    when (action) {
-                                        ReaderTapAction.TOGGLE_MENU -> showOverlay = !showOverlay
-                                        ReaderTapAction.NEXT -> scope.launch {
-                                            pagerState.animateScrollToPage(
-                                                (pagerState.currentPage + 1).coerceAtMost(displayUnits.lastIndex),
-                                            )
-                                        }
-                                        ReaderTapAction.PREVIOUS -> scope.launch {
-                                            pagerState.animateScrollToPage(
-                                                (pagerState.currentPage - 1).coerceAtLeast(0),
-                                            )
-                                        }
-                                        ReaderTapAction.NONE -> Unit
-                                    }
-                                }
-                            },
-                    ) { unitIndex ->
-                        val pair = displayUnits[unitIndex]
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
+                                },
+                            contentPadding = PaddingValues(horizontal = sidePad),
+                            verticalArrangement = Arrangement.spacedBy(itemGap),
                         ) {
-                            pair.forEach { page ->
+                            itemsIndexed(pages, key = { _, p -> p.index }) { _, page ->
                                 ZoomableAsyncImage(
-                                    model = buildPageImageModel(context, page),
+                                    model = buildPageImageModel(context, page, limitWebtoonStripHeight = true),
                                     contentDescription = "Page ${page.index + 1}",
-                                    contentScale = ContentScale.Fit,
+                                    contentScale = ContentScale.FillWidth,
                                     colorFilter = colorFilter,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxSize(),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
+                            }
+                        }
+                    }
+
+                    ReaderMode.LTR, ReaderMode.RTL, ReaderMode.DOUBLE_PAGE_SPREAD -> {
+                        val isRtl = state.activeMode == ReaderMode.RTL
+                        val spreadMode = state.activeMode == ReaderMode.DOUBLE_PAGE_SPREAD
+                        val displayUnits = remember(pages, spreadMode) {
+                            if (spreadMode) pages.chunked(2) else pages.map { listOf(it) }
+                        }
+                        val pagerState = rememberPagerState(
+                            initialPage = (state.currentPageIndex / if (spreadMode) 2 else 1)
+                                .coerceIn(0, (displayUnits.size - 1).coerceAtLeast(0)),
+                            pageCount = { displayUnits.size },
+                        )
+
+                        LaunchedEffect(pagerState.currentPage) {
+                            val firstPage = displayUnits.getOrNull(pagerState.currentPage)?.firstOrNull()?.index ?: 0
+                            viewModel.onPageChanged(firstPage)
+                        }
+                        LaunchedEffect(seekRequest, spreadMode) {
+                            seekRequest?.let { (target, _) ->
+                                val targetUnit = (target / if (spreadMode) 2 else 1)
+                                    .coerceIn(0, (displayUnits.size - 1).coerceAtLeast(0))
+                                pagerState.scrollToPage(targetUnit)
+                                seekRequest = null
+                            }
+                        }
+
+                        HorizontalPager(
+                            state = pagerState,
+                            reverseLayout = isRtl,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(state.preferences.tapZonePreset, isRtl) {
+                                    detectTapGestures { offset ->
+                                        val action = TapZoneResolver.resolve(
+                                            normalizedX = offset.x / size.width.coerceAtLeast(1),
+                                            normalizedY = offset.y / size.height.coerceAtLeast(1),
+                                            preset = state.preferences.tapZonePreset,
+                                            isRtl = isRtl,
+                                        )
+                                        when (action) {
+                                            ReaderTapAction.TOGGLE_MENU -> showOverlay = !showOverlay
+                                            ReaderTapAction.NEXT -> scope.launch {
+                                                pagerState.animateScrollToPage(
+                                                    (pagerState.currentPage + 1).coerceAtMost(displayUnits.lastIndex),
+                                                )
+                                            }
+                                            ReaderTapAction.PREVIOUS -> scope.launch {
+                                                pagerState.animateScrollToPage(
+                                                    (pagerState.currentPage - 1).coerceAtLeast(0),
+                                                )
+                                            }
+                                            ReaderTapAction.NONE -> Unit
+                                        }
+                                    }
+                                },
+                        ) { unitIndex ->
+                            val pair = displayUnits[unitIndex]
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                pair.forEach { page ->
+                                    ZoomableAsyncImage(
+                                        model = buildPageImageModel(context, page),
+                                        contentDescription = "Page ${page.index + 1}",
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = colorFilter,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxSize(),
+                                    )
+                                }
                             }
                         }
                     }
@@ -624,7 +670,9 @@ fun ReaderScreen(
             modifier = Modifier.align(Alignment.TopCenter),
         ) {
             TopAppBar(
-                modifier = Modifier.statusBarsPadding(),
+                modifier = Modifier
+                    .statusBarsPadding()
+                    .displayCutoutPadding(),
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Black.copy(alpha = 0.72f),
                     titleContentColor = Color.White,
@@ -680,7 +728,8 @@ fun ReaderScreen(
                 color = Color.Black.copy(alpha = 0.78f),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .displayCutoutPadding(),
             ) {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
                     val currentChapIdx = state.chapters.indexOfFirst { it.id == state.chapter?.id }

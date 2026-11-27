@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -382,6 +384,18 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
+    fun toggleMultiSelectPref(sourceId: Long, key: String, value: String) {
+        val bundle = inspectedBundleFlow.value ?: return
+        val currentSet = bundle.preferences.firstOrNull { it.key == key }?.multiValues.orEmpty()
+        val updatedSet = if (value in currentSet) currentSet - value else currentSet + value
+        extrasExtractor.updateMultiSelectPreference(sourceId, key, updatedSet)
+        inspectedBundleFlow.value = bundle.copy(
+            preferences = bundle.preferences.map {
+                if (it.key == key) it.copy(multiValues = updatedSet) else it
+            },
+        )
+    }
+
     fun clearDomainCookies(domain: String) {
         extrasExtractor.clearCookiesForDomain(domain)
         inspectedBundleFlow.value?.let { bundle ->
@@ -582,12 +596,33 @@ fun BrowseScreen(
                                         }
                                     }
                                     ExtractedPreferenceType.LIST -> {
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
                                             pref.entryValues.forEachIndexed { idx, value ->
                                                 val label = pref.entries.getOrNull(idx) ?: value
                                                 FilterChip(
                                                     selected = pref.currentValue == value,
                                                     onClick = { viewModel.saveTextPref(bundle.primarySourceId, pref.key, value) },
+                                                    label = { Text(label) },
+                                                    shape = MaterialTheme.shapes.small,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    ExtractedPreferenceType.MULTI_SELECT -> {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            pref.entryValues.forEachIndexed { idx, value ->
+                                                val label = pref.entries.getOrNull(idx) ?: value
+                                                FilterChip(
+                                                    selected = value in pref.multiValues,
+                                                    onClick = { viewModel.toggleMultiSelectPref(bundle.primarySourceId, pref.key, value) },
                                                     label = { Text(label) },
                                                     shape = MaterialTheme.shapes.small,
                                                 )

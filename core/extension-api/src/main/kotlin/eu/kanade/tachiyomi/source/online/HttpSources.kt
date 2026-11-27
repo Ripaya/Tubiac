@@ -118,6 +118,10 @@ abstract class HttpSource : CatalogueSource {
     override fun fetchPageList(chapter: SChapter): Observable<List<Page>> = Observable.fromCallable {
         client.newCall(pageListRequest(chapter)).execute().use(::pageListParse)
     }
+
+    open fun prepareNewChapter(chapter: SChapter, manga: SManga) {}
+
+    override fun toString(): String = "$name (${lang.uppercase()})"
 }
 
 abstract class ParsedHttpSource : HttpSource() {

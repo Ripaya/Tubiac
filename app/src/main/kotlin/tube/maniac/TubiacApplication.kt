@@ -11,11 +11,20 @@ import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.disk.directory
+import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import dagger.hilt.android.HiltAndroidApp
+import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import tube.maniac.core.extension.loader.ExtensionInstallBridge
 import tube.maniac.core.extension.loader.SourceManager
+import tube.maniac.core.network.NetworkRuntimeConfig
+import uy.kohesive.injekt.registerInjekt
+import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -26,6 +35,12 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
 
     @Inject
     lateinit var okHttpClient: OkHttpClient
+
+    @Inject
+    lateinit var networkConfig: NetworkRuntimeConfig
+
+    @Inject
+    lateinit var json: Json
 
     @Inject
     lateinit var sourceManager: SourceManager
@@ -43,6 +58,14 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
 
     override fun onCreate() {
         super.onCreate()
+        // Populate Injekt registry eagerly before any extension classloader initialization runs
+        ExtensionNetworkBridge.sharedClient = okHttpClient
+        ExtensionNetworkBridge.userAgentProvider = { networkConfig.userAgent.get() }
+        registerInjekt<Application>(this)
+        registerInjekt<Context>(this)
+        registerInjekt(NetworkHelper())
+        registerInjekt(json)
+
         ExtensionInstallBridge.onInstallSuccess = { sourceManager.reloadExtensions() }
         val pkgFilter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -65,6 +88,17 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
 
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
+            .memoryCache {
+                MemoryCache.Builder()
+                    .maxSizePercent(context, 0.20)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(File(cacheDir, "image_cache"))
+                    .maxSizeBytes(256L * 1024L * 1024L)
+                    .build()
+            }
             .components {
                 add(ZipEntryFetcher.Factory(this@TubiacApplication))
                 add(OkHttpNetworkFetcherFactory(callFactory = { okHttpClient }))
