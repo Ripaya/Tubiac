@@ -42,6 +42,14 @@ data class RepoSourceDto(
     val baseUrl: String = "",
 )
 
+object ExtensionInstallBridge {
+    @Volatile
+    var onInstallSuccess: (() -> Unit)? = null
+
+    @Volatile
+    var lastInstallError: String? = null
+}
+
 data class RepoRefreshResult(
     val extensions: List<ExtensionInfo>,
     val errors: Map<String, String> = emptyMap(),
@@ -63,13 +71,14 @@ class ExtensionRepoManager @Inject constructor(
         installedByPkg: Map<String, ExtensionInfo>,
     ): Result<List<ExtensionInfo>> = withContext(Dispatchers.IO) {
         runCatching {
-            val request = Request.Builder().url(repo.indexUrl).get().build()
+            val normalizedUrl = normalizeRepoIndexUrl(repo.indexUrl)
+            val request = Request.Builder().url(normalizedUrl).get().build()
             val body = okHttpClient.newCall(request).execute().use { response ->
                 require(response.isSuccessful) { "Repository returned HTTP ${response.code}" }
-                response.body?.string().orEmpty()
+                response.body.string()
             }
             val entries = json.decodeFromString<List<RepoIndexEntryDto>>(body)
-            val baseUrl = repo.indexUrl.substringBeforeLast("/")
+            val baseUrl = normalizedUrl.substringBeforeLast("/")
 
             repoDao.updateRefreshStatus(
                 id = repo.id,
@@ -147,13 +156,15 @@ class ExtensionRepoManager @Inject constructor(
             installer.openSession(sessionId).use { session ->
                 okHttpClient.newCall(Request.Builder().url(apkUrl).get().build()).execute().use { response ->
                     require(response.isSuccessful) { "APK download failed (HTTP ${response.code})" }
-                    val stream = requireNotNull(response.body?.byteStream()) { "Empty APK response" }
+                    val stream = response.body.byteStream()
                     session.openWrite("extension.apk", 0, -1).use { out ->
                         stream.copyTo(out)
                         session.fsync(out)
                     }
                 }
-                val callbackIntent = Intent("tube.maniac.EXTENSION_INSTALL_STATUS").setPackage(context.packageName)
+                val callbackIntent = Intent("tube.maniac.EXTENSION_INSTALL_STATUS").apply {
+                    setClassName(context.packageName, "tube.maniac.ExtensionInstallReceiver")
+                }
                 val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 } else {
@@ -170,5 +181,16 @@ class ExtensionRepoManager @Inject constructor(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+    }
+
+    companion object {
+        fun normalizeRepoIndexUrl(raw: String): String {
+            val trimmed = raw.trim().trimEnd('/')
+            return if (trimmed.endsWith(".json", ignoreCase = true)) {
+                trimmed
+            } else {
+                "$trimmed/index.min.json"
+            }
+        }
     }
 }

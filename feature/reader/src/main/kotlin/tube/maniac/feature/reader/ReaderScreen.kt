@@ -1,7 +1,9 @@
 package tube.maniac.feature.reader
 
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.BatteryManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -73,9 +75,17 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -101,14 +111,18 @@ import tube.maniac.core.model.ReaderMode
 import tube.maniac.core.model.ReaderPreferences
 import tube.maniac.core.model.Series
 import tube.maniac.core.model.SmartReaderModeDetector
+import java.io.File
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.ZipInputStream
 import javax.inject.Inject
 
 data class ReaderPageItem(
     val index: Int,
     val imageUrl: String,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 data class ReaderUiState(
@@ -126,6 +140,7 @@ data class ReaderUiState(
 
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val seriesDao: SeriesDao,
     private val chapterDao: ChapterDao,
     private val historyDao: HistoryDao,
@@ -158,24 +173,50 @@ class ReaderViewModel @Inject constructor(
                 isLandscapeTablet = isLandscapeTablet,
             )
 
-            val source = sourceManager.getSource(series.sourceId)
             var loadError: String? = null
-            val fetchedPages = runCatching {
-                if (source != null) {
-                    val sChapter = SChapter.create().apply {
-                        url = chapter.url
-                        name = chapter.name
-                        chapter_number = chapter.chapterNumber
+            val offlinePages = loadOfflineDownloadedPages(series.sourceId, series.id, chapter.id)
+            val fetchedPages = if (offlinePages.isNotEmpty()) {
+                offlinePages
+            } else {
+                val source = sourceManager.getSource(series.sourceId)
+                runCatching {
+                    if (source != null) {
+                        val sChapter = SChapter.create().apply {
+                            url = chapter.url
+                            name = chapter.name
+                            chapter_number = chapter.chapterNumber
+                        }
+                        val rawPages = source.getPageList(sChapter)
+                        val httpSource = source as? HttpSource
+                        coroutineScope {
+                            rawPages.mapIndexed { idx, p ->
+                                async {
+                                    if (p.imageUrl.isNullOrBlank() && httpSource != null && p.url.isNotBlank()) {
+                                        runCatching { p.imageUrl = httpSource.getImageUrl(p) }
+                                    }
+                                    val resolvedUrl = p.imageUrl?.takeIf { it.isNotBlank() } ?: p.url
+                                    val reqHeaders = httpSource?.let { hs ->
+                                        runCatching { hs.imageRequest(p).headers }.getOrNull()
+                                    }
+                                    val headerMap = buildMap<String, String> {
+                                        reqHeaders?.let { h ->
+                                            for (i in 0 until h.size) {
+                                                put(h.name(i), h.value(i))
+                                            }
+                                        }
+                                    }
+                                    ReaderPageItem(idx, resolvedUrl, headerMap)
+                                }
+                            }.awaitAll()
+                        }
+                    } else {
+                        loadError = "Source is not installed for this series."
+                        emptyList()
                     }
-                    source.getPageList(sChapter).mapIndexed { idx, p ->
-                        ReaderPageItem(idx, p.imageUrl ?: p.url)
-                    }
-                } else {
-                    emptyList()
-                }
-            }.onFailure { err ->
-                loadError = err.message ?: "Failed to load chapter pages"
-            }.getOrDefault(emptyList())
+                }.onFailure { err ->
+                    loadError = err.message ?: "Failed to load chapter pages"
+                }.getOrDefault(emptyList())
+            }
 
             _uiState.value = ReaderUiState(
                 series = series,
@@ -284,6 +325,58 @@ class ReaderViewModel @Inject constructor(
             )
         }
     }
+
+    private fun loadOfflineDownloadedPages(
+        sourceId: Long,
+        seriesId: Long,
+        chapterId: Long,
+    ): List<ReaderPageItem> {
+        val downloadsRoot = context.getExternalFilesDir("downloads") ?: return emptyList()
+        val chapterHash = MessageDigest.getInstance("SHA-256")
+            .digest("${sourceId}_${seriesId}_$chapterId".toByteArray())
+            .take(6)
+            .joinToString("") { "%02x".format(it) }
+
+        val cbzFile = File(downloadsRoot, "$chapterHash.cbz")
+        if (cbzFile.exists()) {
+            val entries = mutableListOf<String>()
+            runCatching {
+                cbzFile.inputStream().use { input ->
+                    ZipInputStream(input).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            if (!entry.isDirectory) entries.add(entry.name)
+                            entry = zis.nextEntry
+                        }
+                    }
+                }
+            }
+            val uriBase = Uri.fromFile(cbzFile).toString()
+            return entries.sorted().mapIndexed { idx, name ->
+                ReaderPageItem(idx, "$uriBase#$name")
+            }
+        }
+
+        val rawDir = File(downloadsRoot, chapterHash)
+        if (rawDir.isDirectory) {
+            val files = rawDir.listFiles()?.filter { it.isFile }?.sortedBy { it.name }.orEmpty()
+            return files.mapIndexed { idx, file ->
+                ReaderPageItem(idx, Uri.fromFile(file).toString())
+            }
+        }
+        return emptyList()
+    }
+}
+
+private fun buildPageImageModel(context: Context, page: ReaderPageItem): Any {
+    if (page.headers.isEmpty()) return page.imageUrl
+    val nh = NetworkHeaders.Builder().apply {
+        page.headers.forEach { (k, v) -> set(k, v) }
+    }.build()
+    return ImageRequest.Builder(context)
+        .data(page.imageUrl)
+        .httpHeaders(nh)
+        .build()
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -417,7 +510,7 @@ fun ReaderScreen(
                     ) {
                         itemsIndexed(pages, key = { _, p -> p.index }) { _, page ->
                             ZoomableAsyncImage(
-                                model = page.imageUrl,
+                                model = buildPageImageModel(context, page),
                                 contentDescription = "Page ${page.index + 1}",
                                 contentScale = ContentScale.FillWidth,
                                 colorFilter = colorFilter,
@@ -489,7 +582,7 @@ fun ReaderScreen(
                         ) {
                             pair.forEach { page ->
                                 ZoomableAsyncImage(
-                                    model = page.imageUrl,
+                                    model = buildPageImageModel(context, page),
                                     contentDescription = "Page ${page.index + 1}",
                                     contentScale = ContentScale.Fit,
                                     colorFilter = colorFilter,

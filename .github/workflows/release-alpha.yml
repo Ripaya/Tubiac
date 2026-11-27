@@ -48,10 +48,16 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platforms;android-37.1" "build-tools;36.0.0" "build-tools;37.0.0"
 
-      - name: Set up Gradle 9.4.1
+      - name: Resolve Gradle version from wrapper
+        id: gradle_ver
+        run: |
+          VER=$(grep -oE 'gradle-[0-9.]+-bin\.zip' gradle/wrapper/gradle-wrapper.properties | sed -E 's/gradle-([0-9.]+)-bin\.zip/\1/')
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Gradle ${{ steps.gradle_ver.outputs.version }}
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '9.4.1'
+          gradle-version: ${{ steps.gradle_ver.outputs.version }}
 
       - name: Decode optional release keystore
         env:

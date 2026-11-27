@@ -50,6 +50,10 @@
             android:exported="false"
             android:theme="@style/Theme.Tubiac" />
 
+        <receiver
+            android:name=".ExtensionInstallReceiver"
+            android:exported="false" />
+
         <!-- Disable default WorkManager initializer so HiltWorkerFactory is used -->
         <provider
             android:name="androidx.startup.InitializationProvider"

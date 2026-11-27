@@ -55,7 +55,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -205,11 +208,12 @@ class BrowseViewModel @Inject constructor(
 
     fun addRepo(name: String, indexUrl: String, trusted: Boolean) {
         if (indexUrl.isBlank()) return
+        val normalized = ExtensionRepoManager.normalizeRepoIndexUrl(indexUrl)
         viewModelScope.launch {
             repoDao.upsert(
                 ExtensionRepoEntity(
-                    name = name.ifBlank { indexUrl.substringAfter("://").substringBefore("/") },
-                    indexUrl = indexUrl.trim(),
+                    name = name.ifBlank { normalized.substringAfter("://").substringBefore("/") },
+                    indexUrl = normalized,
                     enabled = true,
                     trusted = trusted,
                 ),
@@ -220,6 +224,13 @@ class BrowseViewModel @Inject constructor(
 
     fun toggleRepo(id: Long, enabled: Boolean) {
         viewModelScope.launch { repoDao.setEnabled(id, enabled) }
+    }
+
+    fun toggleRepoTrusted(id: Long, trusted: Boolean) {
+        viewModelScope.launch {
+            repoDao.setTrusted(id, trusted)
+            refreshRepos()
+        }
     }
 
     fun deleteRepo(id: Long) {
@@ -328,6 +339,7 @@ fun BrowseScreen(
                 BrowseSubTab.REPOS -> ReposList(
                     repos = state.repos,
                     onToggle = viewModel::toggleRepo,
+                    onToggleTrusted = viewModel::toggleRepoTrusted,
                     onDelete = viewModel::deleteRepo,
                     onAddClick = { showAddRepoDialog = true },
                 )
@@ -558,14 +570,31 @@ private fun ExtensionsList(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(ext.name, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    text = "${ext.lang.uppercase()} • v${ext.versionName}" +
-                                        if (ext.isNsfw) " • 18+" else "",
-                                    style = MaterialTheme.typography.labelMedium.tabular(),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                if (!ext.iconUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = ext.iconUrl,
+                                        contentDescription = ext.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(MaterialTheme.shapes.small),
+                                    )
+                                }
+                                Column {
+                                    Text(ext.name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        text = "${ext.lang.uppercase()} • v${ext.versionName}" +
+                                            (if (ext.isNsfw) " • 18+" else "") +
+                                            (if (ext.installState == ExtensionInstallState.UNTRUSTED) " • Untrusted repo" else ""),
+                                        style = MaterialTheme.typography.labelMedium.tabular(),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                             when (ext.installState) {
                                 ExtensionInstallState.INSTALLED -> {
@@ -598,6 +627,7 @@ private fun ExtensionsList(
 private fun ReposList(
     repos: List<ExtensionRepo>,
     onToggle: (Long, Boolean) -> Unit,
+    onToggleTrusted: (Long, Boolean) -> Unit,
     onDelete: (Long) -> Unit,
     onAddClick: () -> Unit,
 ) {
@@ -626,18 +656,28 @@ private fun ReposList(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(repo.name, style = MaterialTheme.typography.titleSmall)
                             Text(
                                 text = repo.indexUrl,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Text(
-                                text = "${repo.extensionCount} extensions • ${if (repo.trusted) "Trusted" else "Unverified"}",
-                                style = MaterialTheme.typography.labelSmall.tabular(),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "${repo.extensionCount} extensions",
+                                    style = MaterialTheme.typography.labelSmall.tabular(),
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                FilterChip(
+                                    selected = repo.trusted,
+                                    onClick = { onToggleTrusted(repo.id, !repo.trusted) },
+                                    label = { Text(if (repo.trusted) "Trusted" else "Trust Repo") },
+                                )
+                            }
                         }
                         Switch(checked = repo.enabled, onCheckedChange = { onToggle(repo.id, it) })
                         IconButton(onClick = { onDelete(repo.id) }) {

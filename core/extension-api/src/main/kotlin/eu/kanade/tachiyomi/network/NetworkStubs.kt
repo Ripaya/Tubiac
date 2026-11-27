@@ -117,5 +117,8 @@ class NetworkHelper {
     val cloudflareClient: OkHttpClient
         get() = ExtensionNetworkBridge.sharedClient
 
+    val headers: Headers
+        get() = Headers.Builder().add("User-Agent", defaultUserAgentProvider()).build()
+
     fun defaultUserAgentProvider(): String = ExtensionNetworkBridge.userAgentProvider()
 }

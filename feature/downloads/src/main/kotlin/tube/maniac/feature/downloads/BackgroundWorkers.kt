@@ -15,6 +15,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -94,11 +95,17 @@ class DownloadWorker @AssistedInject constructor(
                     pages.mapIndexed { idx, page ->
                         async {
                             semaphore.withPermit {
+                                val httpSource = source as? HttpSource
+                                if (page.imageUrl.isNullOrBlank() && httpSource != null && page.url.isNotBlank()) {
+                                    page.imageUrl = httpSource.getImageUrl(page)
+                                }
                                 val url = page.imageUrl ?: page.url
                                 val file = File(outputRoot, String.format(java.util.Locale.US, "%04d_%s.jpg", idx, sha256Short(url)))
-                                okHttpClient.newCall(Request.Builder().url(url).get().build()).execute().use { resp ->
+                                val pageRequest = httpSource?.let { runCatching { it.imageRequest(page) }.getOrNull() }
+                                    ?: Request.Builder().url(url).get().build()
+                                okHttpClient.newCall(pageRequest).execute().use { resp ->
                                     if (!resp.isSuccessful) error("HTTP ${resp.code} fetching page ${idx + 1}")
-                                    resp.body?.byteStream()?.use { input ->
+                                    resp.body.byteStream().use { input ->
                                         FileOutputStream(file).use { out -> input.copyTo(out) }
                                     }
                                 }

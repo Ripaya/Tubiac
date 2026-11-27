@@ -1,0 +1,122 @@
+name: Dependency Check & Auto-Update
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  update-deps:
+    name: Check, Verify & Update Compatible Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check available library & Gradle updates
+        id: check
+        run: |
+          python3 .github/scripts/auto_update_deps.py --check --json-out /tmp/dep-report.json
+          COUNT=$(python3 -c 'import json; d=json.load(open("/tmp/dep-report.json")); print(len(d["available_updates"]))')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        if: steps.check.outputs.count != '0'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licenses & install SDK 37.1
+        if: steps.check.outputs.count != '0'
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-37.1" "build-tools;36.0.0" "build-tools;37.0.0"
+
+      - name: Apply & verify full batch updates
+        if: steps.check.outputs.count != '0'
+        id: try_all
+        run: |
+          python3 .github/scripts/auto_update_deps.py --apply --json-out /tmp/dep-applied.json
+          GRADLE_VER=$(grep -oE 'gradle-[0-9.]+-bin\.zip' gradle/wrapper/gradle-wrapper.properties | sed -E 's/gradle-([0-9.]+)-bin\.zip/\1/')
+          echo "Downloading/running Gradle $GRADLE_VER..."
+          curl -sL "https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip" -o /tmp/gradle.zip
+          unzip -q -o /tmp/gradle.zip -d /tmp/gradle-dist
+          GRADLE_BIN="/tmp/gradle-dist/gradle-${GRADLE_VER}/bin/gradle"
+          if "$GRADLE_BIN" test testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon; then
+            echo "full_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "full_ok=false" >> "$GITHUB_OUTPUT"
+            git checkout -- gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties
+          fi
+
+      - name: Fallback to compatible non-toolchain updates
+        if: steps.check.outputs.count != '0' && steps.try_all.outputs.full_ok == 'false'
+        id: try_safe
+        run: |
+          python3 .github/scripts/auto_update_deps.py --apply --exclude agp,kotlin,ksp,gradle --json-out /tmp/dep-safe.json
+          SAFE_COUNT=$(python3 -c 'import json; d=json.load(open("/tmp/dep-safe.json")); print(len(d["applied_updates"]))')
+          if [ "$SAFE_COUNT" = "0" ]; then
+            echo "safe_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          GRADLE_VER=$(grep -oE 'gradle-[0-9.]+-bin\.zip' gradle/wrapper/gradle-wrapper.properties | sed -E 's/gradle-([0-9.]+)-bin\.zip/\1/')
+          GRADLE_BIN="/tmp/gradle-dist/gradle-${GRADLE_VER}/bin/gradle"
+          if "$GRADLE_BIN" test testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon; then
+            echo "safe_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "safe_ok=false" >> "$GITHUB_OUTPUT"
+            git checkout -- gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties
+          fi
+
+      - name: Commit verified updates to main and back up to cdb
+        if: steps.check.outputs.count != '0' && (steps.try_all.outputs.full_ok == 'true' || steps.try_safe.outputs.safe_ok == 'true')
+        run: |
+          if ! git diff --quiet gradle/; then
+            git config user.name "Ripaya"
+            git config user.email "laren@tuta.io"
+            git add gradle/libs.versions.toml gradle/wrapper/gradle-wrapper.properties
+            git commit -m "build(deps): auto-update verified compatible dependencies"
+            git push origin main
+            git push origin main:cdb
+          fi
+
+      - name: Report incompatible or remaining updates via GitHub Issue
+        if: steps.check.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/auto_update_deps.py --check --json-out /tmp/dep-remaining.json
+          python3 - <<'PY'
+          import json, subprocess
+
+          data = json.load(open("/tmp/dep-remaining.json"))
+          rem = data["available_updates"]
+          title = "[Dependency Monitor] Pending or Incompatible Library Updates"
+          existing = json.loads(subprocess.check_output([
+              "gh", "issue", "list", "--state", "open", "--search", f'"{title}" in:title', "--json", "number,title"
+          ]).decode())
+          match = [i["number"] for i in existing if i["title"] == title]
+
+          if not rem:
+              for num in match:
+                  subprocess.run(["gh", "issue", "close", str(num), "--comment", "All dependencies are up to date and verified on main."], check=False)
+          else:
+              lines = ["The automated dependency checker found updates that could not be auto-applied without compatibility changes:", "", "| Key | Artifact | Current | Latest |", "| --- | --- | --- | --- |"]
+              for u in rem:
+                  lines.append(f"| `{u['key']}` | `{u['artifact']}` | `{u['current']}` | `{u['latest']}` |")
+              body = "\n".join(lines)
+              if match:
+                  subprocess.run(["gh", "issue", "edit", str(match[0]), "--body", body], check=True)
+              else:
+                  subprocess.run(["gh", "issue", "create", "--title", title, "--body", body, "--label", "dependencies"], check=True)
+          PY

@@ -254,6 +254,9 @@ interface ExtensionRepoDao {
     @Query("UPDATE extension_repos SET enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: Long, enabled: Boolean)
 
+    @Query("UPDATE extension_repos SET trusted = :trusted WHERE id = :id")
+    suspend fun setTrusted(id: Long, trusted: Boolean)
+
     @Query("UPDATE extension_repos SET last_refreshed_at = :timestamp, extension_count = :count WHERE id = :id")
     suspend fun updateRefreshStatus(id: Long, timestamp: Long, count: Int)
 

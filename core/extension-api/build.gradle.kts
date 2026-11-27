@@ -33,5 +33,6 @@ dependencies {
     api(libs.okhttp)
     api(libs.jsoup)
     api(libs.rxjava)
+    api(libs.androidx.preference.ktx)
     implementation(libs.kotlinx.coroutines.core)
 }

@@ -1,0 +1,52 @@
+name: Domain & Service Health Monitor
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health-check:
+    name: Check Domains, Links & Services
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run health probes
+        run: |
+          python3 .github/scripts/check_services_health.py \
+            --root . \
+            --json-out /tmp/health.json \
+            --md-out /tmp/health.md
+
+      - name: Report issues or close resolved monitor issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+
+          data = json.load(open("/tmp/health.json"))
+          md = open("/tmp/health.md").read()
+          title = "[Health Monitor] Domain & Service Status Report"
+          existing = json.loads(subprocess.check_output([
+              "gh", "issue", "list", "--state", "open", "--search", f'"{title}" in:title', "--json", "number,title"
+          ]).decode())
+          match = [i["number"] for i in existing if i["title"] == title]
+
+          if not data["has_issues"]:
+              for num in match:
+                  subprocess.run(["gh", "issue", "close", str(num), "--comment", "All monitored domains, DoH resolvers, and core services are healthy."], check=False)
+          else:
+              body = md + "\n\n_Automatically updated by `Domain & Service Health Monitor`._\n"
+              if match:
+                  subprocess.run(["gh", "issue", "edit", str(match[0]), "--body", body], check=True)
+              else:
+                  subprocess.run(["gh", "issue", "create", "--title", title, "--body", body, "--label", "service-health"], check=True)
+          PY

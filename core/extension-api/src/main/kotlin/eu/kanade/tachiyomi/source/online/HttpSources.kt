@@ -79,7 +79,18 @@ abstract class HttpSource : CatalogueSource {
     protected open fun imageUrlRequest(page: Page): Request = GET(page.url, headers)
     protected abstract fun imageUrlParse(response: Response): String
 
-    open fun imageRequest(page: Page): Request = GET(requireNotNull(page.imageUrl), headers)
+    open fun imageRequest(page: Page): Request =
+        GET(requireNotNull(page.imageUrl ?: page.url.takeIf { it.isNotBlank() }), headers)
+
+    open fun fetchImageUrl(page: Page): Observable<String> = Observable.fromCallable {
+        if (!page.imageUrl.isNullOrBlank()) {
+            requireNotNull(page.imageUrl)
+        } else {
+            client.newCall(imageUrlRequest(page)).execute().use(::imageUrlParse)
+        }
+    }
+
+    suspend fun getImageUrl(page: Page): String = fetchImageUrl(page).toBlocking().first()
 
     override fun fetchPopularManga(page: Int): Observable<MangasPage> = Observable.fromCallable {
         client.newCall(popularMangaRequest(page)).execute().use(::popularMangaParse)

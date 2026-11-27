@@ -165,8 +165,15 @@ class SeriesDetailViewModel @Inject constructor(
                             ChapterFilter.BOOKMARKED -> ch.bookmark
                         }
                     }.let { list ->
-                        if (desc) list.sortedByDescending { it.chapterNumber }
-                        else list.sortedBy { it.chapterNumber }
+                        if (desc) {
+                            list.sortedWith(
+                                compareByDescending<Chapter> { it.chapterNumber }.thenBy { it.sourceOrder },
+                            )
+                        } else {
+                            list.sortedWith(
+                                compareBy<Chapter> { it.chapterNumber }.thenByDescending { it.sourceOrder },
+                            )
+                        }
                     }
                     SeriesDetailUiState(
                         series = entity?.toDomain(),

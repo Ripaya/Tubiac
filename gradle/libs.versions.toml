@@ -19,6 +19,7 @@ work = "2.10.1"
 biometric = "1.1.0"
 documentfile = "1.0.1"
 palette = "1.0.0"
+preference = "1.2.1"
 okhttp = "5.5.1"
 coil = "3.6.3"
 telephoto = "0.19.0"
@@ -40,6 +41,7 @@ androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx"
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
 androidx-palette-ktx = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
+androidx-preference-ktx = { group = "androidx.preference", name = "preference-ktx", version.ref = "preference" }
 
 # Jetpack Compose & Material 3 Expressive (1.5.0 via BOM)
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }

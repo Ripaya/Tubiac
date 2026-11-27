@@ -11,11 +11,13 @@ import coil3.fetch.Fetcher
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import okio.Buffer
+import java.io.File
+import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.util.zip.ZipInputStream
 
 /**
- * Decodes `content://...#entryName` pages produced by LocalSource for CBZ/ZIP/EPUB archives.
+ * Decodes `content://...#entryName` and `file://...#entryName` pages from CBZ/ZIP/EPUB archives.
  */
 class ZipEntryFetcher(
     private val context: Context,
@@ -25,7 +27,15 @@ class ZipEntryFetcher(
 ) : Fetcher {
 
     override suspend fun fetch(): FetchResult {
-        val bytes = context.contentResolver.openInputStream(archiveUri)?.use { input ->
+        val stream = if (archiveUri.scheme == "file") {
+            val file = archiveUri.path?.let(::File) ?: throw FileNotFoundException("Invalid file URI: $archiveUri")
+            FileInputStream(file)
+        } else {
+            context.contentResolver.openInputStream(archiveUri)
+                ?: throw FileNotFoundException("Archive not accessible: $archiveUri")
+        }
+
+        val bytes = stream.use { input ->
             ZipInputStream(input).use { zis ->
                 var entry = zis.nextEntry
                 while (entry != null) {
@@ -36,7 +46,7 @@ class ZipEntryFetcher(
                 }
                 null
             }
-        } ?: throw FileNotFoundException("Archive not accessible: $archiveUri")
+        } ?: throw FileNotFoundException("Entry $entryName not found in $archiveUri")
 
         val buffer = Buffer().write(bytes)
         val ext = entryName.substringAfterLast('.', "").lowercase()

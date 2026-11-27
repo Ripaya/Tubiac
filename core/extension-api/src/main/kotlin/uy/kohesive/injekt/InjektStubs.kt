@@ -1,24 +1,29 @@
 package uy.kohesive.injekt
 
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.reflect.KClass
 
 object Injekt {
     @PublishedApi
-    internal val instances = ConcurrentHashMap<KClass<*>, Any>()
+    internal val instances = ConcurrentHashMap<Class<*>, Any>()
 
-    inline fun <reified T : Any> register(instance: T) {
-        instances[T::class] = instance
+    fun <T : Any> register(cls: Class<T>, instance: T) {
+        instances[cls] = instance
     }
 
-    inline fun <reified T : Any> get(): T {
-        val found = instances[T::class]
+    inline fun <reified T : Any> register(instance: T) {
+        register(T::class.java, instance)
+    }
+
+    fun <T : Any> get(cls: Class<T>): T {
+        val found = instances[cls]
         if (found != null) {
             @Suppress("UNCHECKED_CAST")
             return found as T
         }
-        error("No registered Injekt instance for ${T::class.qualifiedName}")
+        error("No registered Injekt instance for ${cls.name}")
     }
+
+    inline fun <reified T : Any> get(): T = get(T::class.java)
 }
 
-inline fun <reified T : Any> injectLazy(): Lazy<T> = lazy { Injekt.get<T>() }
+inline fun <reified T : Any> injectLazy(): Lazy<T> = lazy { Injekt.get(T::class.java) }
