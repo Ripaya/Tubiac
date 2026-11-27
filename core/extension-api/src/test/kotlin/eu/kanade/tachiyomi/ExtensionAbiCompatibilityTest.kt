@@ -102,7 +102,7 @@ class ExtensionAbiCompatibilityTest {
             override val lang: String = "en"
             override val supportsLatest: Boolean = true
 
-            override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/popular/$page", headers)
+            public override fun popularMangaRequest(page: Int): Request = GET("$baseUrl/popular/$page", headers)
             override fun popularMangaSelector(): String = "div.item"
             override fun popularMangaFromElement(element: Element): SManga = SManga.create().apply {
                 title = element.text()
