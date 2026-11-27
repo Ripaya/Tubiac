@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -28,6 +29,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uy.kohesive.injekt.registerInjekt
 import java.lang.reflect.Modifier
 import java.util.concurrent.TimeUnit
 
@@ -147,6 +149,8 @@ class ExtensionAbiCompatibilityTest {
         val sourceInterfaces = listOf(ConfigurableSource::class.java, UnmeteredSource::class.java, SourceFactory::class.java)
         assertTrue(sourceInterfaces.all { it.isInterface })
         assertTrue(MangasPage(emptyList(), false).mangaListEmptyCheck())
+        registerInjekt(NetworkHelper())
+        registerInjekt(Json { ignoreUnknownKeys = true })
         val callObservable = sampleSource.client.newCall(req).asObservable()
         val callSuccessObservable = sampleSource.client.newCall(req).asObservableSuccess()
         assertTrue(callObservable != null && callSuccessObservable != null)
