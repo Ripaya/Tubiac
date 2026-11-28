@@ -34,6 +34,7 @@ dependencies {
     implementation(project(":core:designsystem"))
     implementation(project(":core:database"))
     implementation(project(":core:extension-loader"))
+    implementation(project(":core:network"))
     implementation(project(":core:anilist"))
 
     implementation(platform(libs.androidx.compose.bom))
