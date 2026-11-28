@@ -34,6 +34,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:extension-api"))
 
     api(libs.okhttp)
     api(libs.okhttp.dnsoverhttps)

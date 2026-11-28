@@ -7,6 +7,10 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.asObservable
 import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.network.interceptor.RateLimitInterceptor
+import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
+import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
+import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import eu.kanade.tachiyomi.network.interceptor.rateLimitHost
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.source.UnmeteredSource
@@ -34,6 +38,7 @@ import org.junit.Test
 import uy.kohesive.injekt.registerInjekt
 import java.lang.reflect.Modifier
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.seconds
 
 class ExtensionAbiCompatibilityTest {
 
@@ -53,6 +58,8 @@ class ExtensionAbiCompatibilityTest {
             NetworkHelper::class.java,
             JavaScriptEngine::class.java,
             RateLimitInterceptor::class.java,
+            UncaughtExceptionInterceptor::class.java,
+            UserAgentInterceptor::class.java,
             SManga::class.java,
             SMangaUpdate::class.java,
             SChapter::class.java,
@@ -141,14 +148,35 @@ class ExtensionAbiCompatibilityTest {
 
         val okClientClass = OkHttpClient.Builder::class.java
         val rateLimitKt = Class.forName("eu.kanade.tachiyomi.network.interceptor.RateLimitInterceptorKt")
+        val specificHostRateLimitKt = Class.forName("eu.kanade.tachiyomi.network.interceptor.SpecificHostRateLimitInterceptorKt")
         val jsoupExtKt = Class.forName("eu.kanade.tachiyomi.util.JsoupExtensionsKt")
         val okHttpExtKt = Class.forName("eu.kanade.tachiyomi.network.OkHttpExtensionsKt")
         val requestsKt = Class.forName("eu.kanade.tachiyomi.network.RequestsKt")
 
-        assertTrue(rateLimitKt.methods.any { it.name == "rateLimit" && it.parameterTypes.firstOrNull() == okClientClass })
+        assertTrue(rateLimitKt.methods.any { it.name.startsWith("rateLimit") && it.parameterTypes.firstOrNull() == okClientClass })
+        assertTrue(specificHostRateLimitKt.methods.any { it.name.startsWith("rateLimitHost") && it.parameterTypes.firstOrNull() == okClientClass })
         assertTrue(jsoupExtKt.methods.any { it.name == "asJsoup" && it.parameterTypes.firstOrNull() == Response::class.java })
         assertTrue(okHttpExtKt.methods.any { it.name == "asObservableSuccess" })
         assertTrue(requestsKt.methods.any { it.name == "GET" })
+
+        val testClient = OkHttpClient.Builder()
+            .addInterceptor(UncaughtExceptionInterceptor())
+            .addInterceptor(UserAgentInterceptor { "Tubiac-Test" })
+            .rateLimit(5, 1.seconds)
+            .rateLimitHost("https://example.org", 3, 2.seconds)
+            .build()
+        assertTrue(testClient.interceptors.firstOrNull() is UncaughtExceptionInterceptor)
+
+        val chapter = SChapter.create().apply {
+            url = "/c/1"
+            name = "Ch 1"
+            number = "1"
+            volume = "1"
+            language = "en"
+            locked = false
+            scanlators = listOf("Group A")
+        }
+        assertEquals("Group A", chapter.scanlator)
 
         val req = sampleSource.popularMangaRequest(1)
         assertEquals("https://example.org/popular/1", req.url.toString())

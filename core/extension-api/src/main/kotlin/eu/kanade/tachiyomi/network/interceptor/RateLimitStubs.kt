@@ -2,12 +2,16 @@
 
 package eu.kanade.tachiyomi.network.interceptor
 
-import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import java.io.IOException
 import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.toDuration
+import kotlin.time.toDurationUnit
 
 /**
  * Sliding-window OkHttp rate-limit interceptor matching Mihon/Tachiyomi extension expectations.
@@ -18,14 +22,18 @@ open class RateLimitInterceptor(
     private val permits: Int,
     private val period: Long = 1,
     private val unit: TimeUnit = TimeUnit.SECONDS,
+    durationMs: Long? = null,
 ) : Interceptor {
 
     private val lock = Any()
     private val timestamps = ArrayDeque<Long>()
-    private val periodMs = unit.toMillis(period).coerceAtLeast(1L)
+    private val periodMs = (durationMs ?: unit.toMillis(period)).coerceAtLeast(1L)
     private val maxPermits = permits.coerceAtLeast(1)
 
     override fun intercept(chain: Interceptor.Chain): Response {
+        val call = chain.call()
+        if (call.isCanceled()) throw IOException("Canceled")
+
         val request = chain.request()
         val matchesHost = host == null || request.url.host.equals(host, ignoreCase = true)
         val matchesPrefix = urlPrefix == null || request.url.toString().startsWith(urlPrefix)
@@ -54,28 +62,16 @@ open class RateLimitInterceptor(
     }
 }
 
+@Deprecated("Use the version with kotlin.time APIs instead.")
 fun OkHttpClient.Builder.rateLimit(
     permits: Int,
     period: Long = 1,
     unit: TimeUnit = TimeUnit.SECONDS,
-): OkHttpClient.Builder = addInterceptor(
-    RateLimitInterceptor(permits = permits, period = period, unit = unit),
-)
+): OkHttpClient.Builder = rateLimit(permits, period.toDuration(unit.toDurationUnit()))
 
-fun OkHttpClient.Builder.rateLimitHost(
-    url: HttpUrl,
+fun OkHttpClient.Builder.rateLimit(
     permits: Int,
-    period: Long = 1,
-    unit: TimeUnit = TimeUnit.SECONDS,
+    period: Duration = 1.seconds,
 ): OkHttpClient.Builder = addInterceptor(
-    RateLimitInterceptor(host = url.host, permits = permits, period = period, unit = unit),
-)
-
-fun OkHttpClient.Builder.rateLimitHost(
-    url: String,
-    permits: Int,
-    period: Long = 1,
-    unit: TimeUnit = TimeUnit.SECONDS,
-): OkHttpClient.Builder = addInterceptor(
-    RateLimitInterceptor(urlPrefix = url, permits = permits, period = period, unit = unit),
+    RateLimitInterceptor(permits = permits, durationMs = period.inWholeMilliseconds),
 )

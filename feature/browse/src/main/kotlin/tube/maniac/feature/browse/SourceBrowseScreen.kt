@@ -193,7 +193,10 @@ class SourceBrowseViewModel @Inject constructor(
                     }
                 }
             }.onSuccess { result ->
-                val merged = if (reset) result.mangas else (current.items + result.mangas).distinctBy { it.url }
+                val merged = (if (reset) result.mangas else (current.items + result.mangas).distinctBy { it.url })
+                    .onEach { item ->
+                        item.thumbnail_url = normalizeCoverUrl(item.thumbnail_url, current.baseUrl)
+                    }
                 _uiState.value = _uiState.value.copy(
                     items = merged,
                     page = targetPage,
@@ -227,7 +230,8 @@ class SourceBrowseViewModel @Inject constructor(
     }
 
     fun openManga(manga: SManga, onOpened: (Long) -> Unit) {
-        val sourceId = _uiState.value.sourceId
+        val state = _uiState.value
+        val sourceId = state.sourceId
         viewModelScope.launch(Dispatchers.IO) {
             val existing = seriesDao.getBySourceAndUrl(sourceId, manga.url)
             val id = existing?.id ?: seriesDao.upsert(
@@ -238,7 +242,7 @@ class SourceBrowseViewModel @Inject constructor(
                     author = manga.author,
                     artist = manga.artist,
                     description = manga.description,
-                    coverUrl = manga.thumbnail_url,
+                    coverUrl = normalizeCoverUrl(manga.thumbnail_url, state.baseUrl),
                     genres = manga.genres,
                     publicationStatus = manga.status.toPublicationStatus(),
                     inLibrary = false,
@@ -246,6 +250,19 @@ class SourceBrowseViewModel @Inject constructor(
             )
             withContext(Dispatchers.Main) { onOpened(id) }
         }
+    }
+}
+
+private fun normalizeCoverUrl(rawUrl: String?, baseUrl: String?): String? {
+    val trimmed = rawUrl?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    val scheme = baseUrl?.substringBefore("://")?.takeIf { it == "http" || it == "https" } ?: "https"
+    val cleanBase = baseUrl?.trimEnd('/')
+    return when {
+        trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+        trimmed.startsWith("//") -> "$scheme:$trimmed"
+        trimmed.startsWith("/") && !cleanBase.isNullOrBlank() -> "$cleanBase$trimmed"
+        !cleanBase.isNullOrBlank() -> "$cleanBase/$trimmed"
+        else -> trimmed
     }
 }
 
@@ -384,7 +401,7 @@ fun SourceBrowseScreen(
                             items(state.items, key = { it.url }) { manga ->
                                 SeriesCoverCard(
                                     title = manga.title,
-                                    coverUrl = manga.thumbnail_url,
+                                    coverUrl = normalizeCoverUrl(manga.thumbnail_url, current.baseUrl),
                                     coverHeaders = state.sourceHeaders,
                                     onClick = { viewModel.openManga(manga, onOpenSeriesDetail) },
                                 )

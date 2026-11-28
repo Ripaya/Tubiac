@@ -504,14 +504,15 @@ fun SeriesCoverCard(
                 .matteGrain(strength = 0.6f),
         ) {
             if (!coverUrl.isNullOrBlank()) {
+                val safeCoverUrl = if (coverUrl.startsWith("//")) "https:$coverUrl" else coverUrl
                 val context = LocalContext.current
                 val model: Any = if (coverHeaders.isEmpty()) {
-                    coverUrl
+                    safeCoverUrl
                 } else {
                     val nh = NetworkHeaders.Builder().apply {
                         coverHeaders.forEach { (k, v) -> set(k, v) }
                     }.build()
-                    ImageRequest.Builder(context).data(coverUrl).httpHeaders(nh).build()
+                    ImageRequest.Builder(context).data(safeCoverUrl).httpHeaders(nh).build()
                 }
                 AsyncImage(
                     model = model,

@@ -151,6 +151,27 @@ interface SChapter : Serializable {
         get() = null
         set(_) {}
 
+    var language: String?
+        get() = null
+        set(_) {}
+    var locked: Boolean
+        get() = false
+        set(_) {}
+    var note: String?
+        get() = null
+        set(_) {}
+    var number: String?
+        get() = null
+        set(_) {}
+    var scanlators: List<String>
+        get() = scanlator?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+        set(value) {
+            scanlator = value.joinToString(", ").ifBlank { null }
+        }
+    var volume: String?
+        get() = null
+        set(_) {}
+
     fun setUrlWithoutDomain(url: String) {
         this.url = extractPathAndQuery(url)
     }
@@ -161,6 +182,12 @@ interface SChapter : Serializable {
         date_upload = other.date_upload
         chapter_number = other.chapter_number
         scanlator = other.scanlator
+        if (other.scanlators.isNotEmpty()) scanlators = other.scanlators
+        if (other.language != null) language = other.language
+        locked = other.locked
+        if (other.note != null) note = other.note
+        if (other.number != null) number = other.number
+        if (other.volume != null) volume = other.volume
         memo = other.memo
     }
 
@@ -175,6 +202,20 @@ open class SChapterImpl : SChapter {
     override var date_upload: Long = 0L
     override var chapter_number: Float = -1f
     override var scanlator: String? = null
+    private var _scanlators: List<String>? = null
+    override var scanlators: List<String>
+        get() = _scanlators ?: scanlator?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+        set(value) {
+            _scanlators = value
+            if (scanlator.isNullOrBlank() && value.isNotEmpty()) {
+                scanlator = value.joinToString(", ")
+            }
+        }
+    override var language: String? = null
+    override var locked: Boolean = false
+    override var note: String? = null
+    override var number: String? = null
+    override var volume: String? = null
     override var memo: JsonObject? = null
 
     override fun equals(other: Any?): Boolean {

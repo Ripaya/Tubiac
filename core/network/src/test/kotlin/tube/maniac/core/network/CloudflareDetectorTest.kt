@@ -1,5 +1,6 @@
 package tube.maniac.core.network
 
+import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -9,7 +10,9 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class CloudflareDetectorTest {
 
@@ -63,5 +66,18 @@ class CloudflareDetectorTest {
             client.newCall(Request.Builder().url("https://example.org").build()).execute()
         }
         assertEquals(403, ex.statusCode)
+    }
+
+    @Test
+    fun `uncaught exception interceptor wraps non-IO exceptions as IOException and preserves IOException`() {
+        val client = OkHttpClient.Builder()
+            .addInterceptor(UncaughtExceptionInterceptor())
+            .addInterceptor { throw IllegalStateException("broken downstream") }
+            .build()
+        assertTrue(client.interceptors.firstOrNull() is UncaughtExceptionInterceptor)
+        val ioEx = assertThrows(IOException::class.java) {
+            client.newCall(Request.Builder().url("https://example.org").build()).execute()
+        }
+        assertTrue(ioEx.cause is IllegalStateException)
     }
 }

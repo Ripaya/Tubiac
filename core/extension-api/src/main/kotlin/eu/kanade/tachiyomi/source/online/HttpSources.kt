@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.source.online
 
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -21,7 +22,9 @@ import java.security.MessageDigest
 
 object ExtensionNetworkBridge {
     @Volatile
-    var sharedClient: OkHttpClient = OkHttpClient()
+    var sharedClient: OkHttpClient = OkHttpClient.Builder()
+        .addInterceptor(UncaughtExceptionInterceptor())
+        .build()
 
     @Volatile
     var userAgentProvider: () -> String = {
@@ -86,11 +89,16 @@ abstract class HttpSource : CatalogueSource {
         orig
     }
 
-    private fun resolveRelativeUrl(pathOrUrl: String): String = when {
-        pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://") -> pathOrUrl
-        pathOrUrl.isBlank() -> baseUrl
-        pathOrUrl.startsWith("/") -> baseUrl.trimEnd('/') + pathOrUrl
-        else -> "${baseUrl.trimEnd('/')}/$pathOrUrl"
+    private fun resolveRelativeUrl(pathOrUrl: String): String {
+        val trimmed = pathOrUrl.trim()
+        val scheme = baseUrl.substringBefore("://", "https").ifBlank { "https" }
+        return when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            trimmed.startsWith("//") -> "$scheme:$trimmed"
+            trimmed.isBlank() -> baseUrl
+            trimmed.startsWith("/") -> baseUrl.trimEnd('/') + trimmed
+            else -> "${baseUrl.trimEnd('/')}/$trimmed"
+        }
     }
 
     protected abstract fun popularMangaRequest(page: Int): Request
