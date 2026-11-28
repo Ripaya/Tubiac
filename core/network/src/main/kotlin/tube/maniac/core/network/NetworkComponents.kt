@@ -138,17 +138,12 @@ class CloudflareDetectorInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val hostLock = if (context != null) {
-            hostLocks.computeIfAbsent(request.url.host) { ReentrantReadWriteLock() }
-        } else {
-            null
-        }
-
-        if (hostLock == null) {
+        val appContext = context ?: run {
             val response = chain.proceed(request)
             inspectAndThrowIfBlocked(request, response)
             return response
         }
+        val hostLock = hostLocks.computeIfAbsent(request.url.host) { ReentrantReadWriteLock() }
 
         val (initialResponse, prevClearance, outcome) = hostLock.read {
             val resp = chain.proceed(request)
@@ -173,7 +168,7 @@ class CloudflareDetectorInterceptor(
                         true
                     } else {
                         initialResponse.close()
-                        solveInBackgroundWebView(context, request, prevClearance)
+                        solveInBackgroundWebView(appContext, request, prevClearance)
                     }
                 }
                 if (resolved) {
