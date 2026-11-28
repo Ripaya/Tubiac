@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -170,43 +171,7 @@ class ExtensionRepoManager @Inject constructor(
                 require(response.isSuccessful) { "APK download failed (HTTP ${response.code})" }
                 response.body.bytes()
             }
-
-            // Verify APK archive contains manifest & compiled dex before loading
-            var hasDex = false
-            var hasManifest = false
-            ZipInputStream(bytes.inputStream()).use { zis ->
-                var entry = zis.nextEntry
-                while (entry != null) {
-                    if (entry.name == "classes.dex" || entry.name.endsWith(".dex")) hasDex = true
-                    if (entry.name == "AndroidManifest.xml") hasManifest = true
-                    entry = zis.nextEntry
-                }
-            }
-            require(hasDex && hasManifest) { "Downloaded package is not a valid extension APK" }
-
-            val extDir = File(context.filesDir, "extensions").apply { mkdirs() }
-            val tempFile = File(extDir, "${extension.pkgName}.apk.tmp")
-            val finalFile = File(extDir, "${extension.pkgName}.apk")
-            if (tempFile.exists()) {
-                runCatching { tempFile.setWritable(true) }
-                tempFile.delete()
-            }
-            if (finalFile.exists()) {
-                runCatching { finalFile.setWritable(true) }
-                finalFile.delete()
-            }
-            tempFile.writeBytes(bytes)
-            // Mark read-only BEFORE renaming so Android 14+ PathClassLoader W^X policy accepts it atomically
-            runCatching { tempFile.setReadOnly() }
-            if (!tempFile.renameTo(finalFile)) {
-                tempFile.copyTo(finalFile, overwrite = true)
-                tempFile.delete()
-                runCatching { finalFile.setReadOnly() }
-            }
-
-            TubiacLogcat.i("ExtensionRepoManager", "Extracted ${extension.pkgName} (${bytes.size} bytes) to sandbox")
-            ExtensionInstallBridge.lastInstallError = null
-            ExtensionInstallBridge.onInstallSuccess?.invoke()
+            writeApkBytesToSandbox(bytes, extension.pkgName)
             Unit
         }.onFailure { err ->
             ExtensionInstallBridge.lastInstallError = err.message
@@ -217,6 +182,75 @@ class ExtensionRepoManager @Inject constructor(
                 throwable = err,
             )
         }
+    }
+
+    /**
+     * Imports a user-picked local extension APK URI cleanly into Tubiac's read-only sandbox storage.
+     */
+    suspend fun installLocalApkUri(uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: error("Could not open selected APK file")
+            val installedPkg = writeApkBytesToSandbox(bytes, explicitPkgName = null)
+            installedPkg
+        }.onFailure { err ->
+            ExtensionInstallBridge.lastInstallError = err.message
+        }
+    }
+
+    private fun writeApkBytesToSandbox(bytes: ByteArray, explicitPkgName: String?): String {
+        var hasDex = false
+        var hasManifest = false
+        ZipInputStream(bytes.inputStream()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (entry.name == "classes.dex" || entry.name.endsWith(".dex")) hasDex = true
+                if (entry.name == "AndroidManifest.xml") hasManifest = true
+                entry = zis.nextEntry
+            }
+        }
+        require(hasDex && hasManifest) { "Selected file is not a valid extension APK" }
+
+        val extDir = File(context.filesDir, "extensions").apply { mkdirs() }
+        val inspectTmp = File(extDir, "_staging_${System.currentTimeMillis()}.apk")
+        inspectTmp.writeBytes(bytes)
+
+        val resolvedPkg = explicitPkgName?.takeIf { it.isNotBlank() } ?: run {
+            val pm = context.packageManager
+            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getPackageArchiveInfo(
+                    inspectTmp.absolutePath,
+                    PackageManager.PackageInfoFlags.of(PackageManager.GET_META_DATA.toLong()),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageArchiveInfo(inspectTmp.absolutePath, PackageManager.GET_META_DATA)
+            }
+            val pkg = info?.packageName
+            if (pkg.isNullOrBlank()) {
+                inspectTmp.delete()
+                error("Could not read Android package metadata from APK")
+            }
+            pkg
+        }
+
+        val finalFile = File(extDir, "$resolvedPkg.apk")
+        if (finalFile.exists()) {
+            runCatching { finalFile.setWritable(true) }
+            finalFile.delete()
+        }
+        // Mark read-only BEFORE renaming so Android 14+ PathClassLoader W^X policy accepts it atomically
+        runCatching { inspectTmp.setReadOnly() }
+        if (!inspectTmp.renameTo(finalFile)) {
+            inspectTmp.copyTo(finalFile, overwrite = true)
+            inspectTmp.delete()
+            runCatching { finalFile.setReadOnly() }
+        }
+
+        TubiacLogcat.i("ExtensionRepoManager", "Installed $resolvedPkg (${bytes.size} bytes) to sandbox")
+        ExtensionInstallBridge.lastInstallError = null
+        ExtensionInstallBridge.onInstallSuccess?.invoke()
+        return resolvedPkg
     }
 
     /** Optional OS-level system installation via Android PackageInstaller. */

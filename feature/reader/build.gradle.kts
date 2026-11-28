@@ -38,6 +38,7 @@ dependencies {
     implementation(project(":core:anilist"))
 
     implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.hilt.navigation.compose)

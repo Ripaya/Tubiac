@@ -490,6 +490,7 @@ private fun TubiacMainShell(
                     chapterId = args.chapterId,
                     initialPage = args.initialPage,
                     onBack = { navController.popBackStack() },
+                    onOpenWebView = onOpenWebView,
                 )
             }
 

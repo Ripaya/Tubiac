@@ -1,6 +1,7 @@
 package tube.maniac.feature.reader
 
 import androidx.compose.ui.graphics.ColorMatrix
+import tube.maniac.core.model.Chapter
 import tube.maniac.core.model.ColorFilterConfig
 import tube.maniac.core.model.TapZonePreset
 
@@ -109,5 +110,18 @@ object ReaderColorFilterBuilder {
         }
 
         return result
+    }
+}
+
+object ReaderChapterOrder {
+    fun sortDescending(chapters: List<Chapter>): List<Chapter> =
+        chapters.sortedWith(compareByDescending<Chapter> { it.chapterNumber }.thenBy { it.sourceOrder })
+
+    fun adjacentChapters(sortedDescChapters: List<Chapter>, currentChapterId: Long): Pair<Chapter?, Chapter?> {
+        val idx = sortedDescChapters.indexOfFirst { it.id == currentChapterId }
+        if (idx < 0) return null to null
+        val prev = sortedDescChapters.getOrNull(idx + 1)
+        val next = if (idx > 0) sortedDescChapters.getOrNull(idx - 1) else null
+        return prev to next
     }
 }
