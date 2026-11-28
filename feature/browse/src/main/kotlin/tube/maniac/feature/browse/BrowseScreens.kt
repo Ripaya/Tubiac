@@ -1155,7 +1155,7 @@ class GlobalSearchViewModel @Inject constructor(
                     artist = item.manga.artist,
                     description = item.manga.description,
                     coverUrl = item.manga.thumbnail_url,
-                    genres = item.manga.getGenres().orEmpty(),
+                    genres = item.manga.genres,
                     publicationStatus = when (item.manga.status) {
                         SManga.ONGOING -> PublicationStatus.ONGOING
                         SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> PublicationStatus.COMPLETED

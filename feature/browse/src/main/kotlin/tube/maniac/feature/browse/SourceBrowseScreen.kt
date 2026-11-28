@@ -239,7 +239,7 @@ class SourceBrowseViewModel @Inject constructor(
                     artist = manga.artist,
                     description = manga.description,
                     coverUrl = manga.thumbnail_url,
-                    genres = manga.getGenres().orEmpty(),
+                    genres = manga.genres,
                     publicationStatus = manga.status.toPublicationStatus(),
                     inLibrary = false,
                 ),

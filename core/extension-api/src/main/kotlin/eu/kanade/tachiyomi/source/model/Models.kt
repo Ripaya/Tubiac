@@ -49,10 +49,6 @@ interface SManga : Serializable {
         get() = null
         set(_) {}
 
-    fun getGenres(): List<String>? =
-        genres.takeIf { it.isNotEmpty() }
-            ?: genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct()
-
     fun setUrlWithoutDomain(url: String) {
         this.url = extractPathAndQuery(url)
     }
@@ -107,7 +103,15 @@ open class SMangaImpl : SManga {
     override var author: String? = null
     override var description: String? = null
     override var genre: String? = null
-    override var genres: List<String> = emptyList()
+    private var _genres: List<String>? = null
+    override var genres: List<String>
+        get() = _genres ?: genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct().orEmpty()
+        set(value) {
+            _genres = value
+            if (genre.isNullOrBlank() && value.isNotEmpty()) {
+                genre = value.joinToString(", ")
+            }
+        }
     override var banner: String? = null
     override var language: String? = null
     override var contentRating: SManga.ContentRating = SManga.ContentRating.SAFE

@@ -336,7 +336,7 @@ class SeriesDetailViewModel @Inject constructor(
                             description = details.description ?: entity.description,
                             coverUrl = details.thumbnail_url ?: entity.coverUrl,
                             bannerUrl = details.banner ?: entity.bannerUrl,
-                            genres = details.getGenres() ?: entity.genres,
+                            genres = details.genres.takeIf { it.isNotEmpty() } ?: entity.genres,
                             publicationStatus = when (details.status) {
                                 SManga.ONGOING -> PublicationStatus.ONGOING
                                 SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> PublicationStatus.COMPLETED
