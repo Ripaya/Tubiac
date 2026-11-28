@@ -61,6 +61,8 @@ import tube.maniac.core.designsystem.components.MatteBackground
 import tube.maniac.core.designsystem.components.MatteSegmentedTabs
 import tube.maniac.core.designsystem.components.SeriesCoverCard
 import tube.maniac.core.designsystem.components.TubiacTopBar
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.unwrapRoot
 import tube.maniac.core.extension.loader.LocalSource
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.PublicationStatus
@@ -159,14 +161,25 @@ class SourceBrowseViewModel @Inject constructor(
                     isLoading = false,
                 )
             }.onFailure { err ->
-                val url = when (err) {
-                    is CloudflareChallengeException -> err.challengeUrl
-                    is IpBlockedException -> err.blockedUrl
-                    else -> current.baseUrl
+                val root = err.unwrapRoot()
+                val url = when (root) {
+                    is CloudflareChallengeException -> root.challengeUrl
+                    is IpBlockedException -> root.blockedUrl
+                    else -> {
+                        if (root !is kotlinx.coroutines.CancellationException) {
+                            AutoIssueReporter.reportRuntimeBug(
+                                category = "source-browse",
+                                title = "[Source] ${source.name} failed ${current.activeTab.name.lowercase()}",
+                                detail = "sourceId=${source.id}, tab=${current.activeTab}, page=$targetPage",
+                                throwable = root,
+                            )
+                        }
+                        current.baseUrl
+                    }
                 }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    errorMessage = err.message ?: "Failed to load catalog from ${source.name}",
+                    errorMessage = root.message ?: "Failed to load catalog from ${source.name}",
                     blockedUrl = url,
                 )
             }

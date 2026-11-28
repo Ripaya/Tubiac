@@ -82,6 +82,8 @@ jobs:
           TUBIAC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           TUBIAC_VERSION_NAME: ${{ steps.ver.outputs.version_name }}
           TUBIAC_VERSION_CODE: ${{ steps.ver.outputs.version_code }}
+          TUBIAC_ISSUE_RELAY_URL: ${{ secrets.TUBIAC_ISSUE_RELAY_URL }}
+          TUBIAC_ISSUE_TOKEN: ${{ secrets.TUBIAC_ISSUE_TOKEN }}
         run: gradle :app:assembleAlpha --stacktrace --no-daemon
 
       - name: Prepare release artifacts

@@ -32,6 +32,8 @@ import tube.maniac.core.database.dao.SeriesDao
 import tube.maniac.core.database.dao.UpdateErrorDao
 import tube.maniac.core.database.entity.ChapterEntity
 import tube.maniac.core.database.entity.UpdateErrorEntity
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.unwrapRoot
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.AutoBackupFrequency
 import tube.maniac.core.model.DownloadState
@@ -160,10 +162,21 @@ class DownloadWorker @AssistedInject constructor(
                 chapterDao.setDownloaded(task.chapterId, true)
                 downloadDao.updateState(task.id, DownloadState.COMPLETED)
             }.onFailure { err ->
-                val message = when (err) {
+                val root = err.unwrapRoot()
+                val message = when (root) {
                     is CloudflareChallengeException -> "Cloudflare challenge — open in WebView"
-                    is IpBlockedException -> "Blocked by site firewall (HTTP ${err.statusCode}) — switch network/VPN or check WebView"
-                    else -> err.message ?: "Download error"
+                    is IpBlockedException -> "Blocked by site firewall (HTTP ${root.statusCode}) — switch network/VPN or check WebView"
+                    else -> {
+                        if (root !is kotlinx.coroutines.CancellationException) {
+                            AutoIssueReporter.reportRuntimeBug(
+                                category = "download-worker",
+                                title = "[Download] Failed chapter ${chapter.name}",
+                                detail = "seriesId=${task.seriesId}, chapterId=${task.chapterId}, sourceId=${task.sourceId}",
+                                throwable = root,
+                            )
+                        }
+                        root.message ?: "Download error"
+                    }
                 }
                 downloadDao.updateState(task.id, DownloadState.FAILED, message)
             }
@@ -260,6 +273,16 @@ class LibraryUpdateWorker @AssistedInject constructor(
                 }
                 updateErrorDao.deleteBySeries(series.id)
             }.onFailure { err ->
+                val root = err.unwrapRoot()
+                val isBlocked = root is CloudflareChallengeException || root is IpBlockedException
+                if (!isBlocked && root !is kotlinx.coroutines.CancellationException) {
+                    AutoIssueReporter.reportRuntimeBug(
+                        category = "library-update",
+                        title = "[Update] Failed checking ${series.title} (${source.name})",
+                        detail = "seriesUrl=${series.url}",
+                        throwable = root,
+                    )
+                }
                 updateErrorDao.upsert(
                     UpdateErrorEntity(
                         seriesId = series.id,
@@ -267,8 +290,8 @@ class LibraryUpdateWorker @AssistedInject constructor(
                         sourceId = series.sourceId,
                         sourceName = source.name,
                         seriesUrl = series.url,
-                        reason = err.message ?: "Could not reach source",
-                        isCloudflare = err is CloudflareChallengeException || err is IpBlockedException,
+                        reason = root.message ?: "Could not reach source",
+                        isCloudflare = isBlocked,
                         occurredAt = System.currentTimeMillis(),
                     ),
                 )

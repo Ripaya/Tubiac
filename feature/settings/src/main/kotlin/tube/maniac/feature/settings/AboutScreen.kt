@@ -20,10 +20,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Feedback
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -33,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,12 +44,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import tube.maniac.core.designsystem.components.MatteCard
 import tube.maniac.core.designsystem.components.TabularBadge
 import tube.maniac.core.designsystem.components.TubiacAppMark
 import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.TubiacLogcat
 
 internal data class AppPackageMeta(
     val versionName: String,
@@ -113,8 +121,12 @@ private val TUBIAC_CHANGELOG = listOf(
 @Composable
 fun SettingsAboutScreen(
     onBack: () -> Unit,
+    viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val vmState by viewModel.uiState.collectAsStateWithLifecycle()
+    val settings = vmState.settings
+    val diag = vmState.diagnosticsState
     val appMeta = rememberAppPackageMeta(context)
     val deviceSummary = remember(appMeta) {
         "Tubiac v${appMeta.versionName} (Build ${appMeta.versionCode}) • ${appMeta.packageName} • Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) • ${Build.MANUFACTURER} ${Build.MODEL}"
@@ -123,6 +135,9 @@ fun SettingsAboutScreen(
     var feedbackCategory by remember { mutableStateOf("Feature Request") }
     var feedbackTitle by remember { mutableStateOf("") }
     var feedbackMessage by remember { mutableStateOf("") }
+    var showLogcatConsole by remember { mutableStateOf(false) }
+    var liveLogcatSnapshot by remember { mutableStateOf("") }
+    var relayUrlDraft by remember(settings.customIssueRelayUrl) { mutableStateOf(settings.customIssueRelayUrl) }
     var actionNotice by remember { mutableStateOf<String?>(null) }
 
     val openUrl: (String) -> Unit = { url ->
@@ -142,7 +157,7 @@ fun SettingsAboutScreen(
     SettingsCategoryScaffold(
         kicker = "SETTINGS // PROJECT INFO",
         title = "About Tubiac",
-        feedback = actionNotice,
+        feedback = actionNotice ?: vmState.statusFeedback,
         onBack = onBack,
     ) {
         // 1. App Icon, Name, Version & Description Hero Card
@@ -408,6 +423,113 @@ fun SettingsAboutScreen(
                     ) {
                         Text("Browse Issues")
                     }
+                }
+            }
+        }
+
+        // 5b. Live Logcat & Automatic Crash / Bug Issue Reporter
+        item {
+            SettingsMatteGroup(title = "Live Logcat & Auto Issue Reporter", icon = Icons.Rounded.Terminal) {
+                SettingsToggleRow(
+                    title = "Auto-Send Crashes & Logcat Issues",
+                    subtitle = "Captures fatal crashes, extension VerifyError/load bugs, and redacted Logcat automatically",
+                    checked = settings.autoReportIssuesEnabled,
+                    onCheckedChange = { enabled ->
+                        viewModel.updateSettings { it.copy(autoReportIssuesEnabled = enabled) }
+                    },
+                )
+                Text(
+                    text = "Status: ${diag.lastStatus} • Queued: ${diag.pendingCount} • Sent: ${diag.sentCount}" +
+                        if (!diag.hasAutoTransport) " • (Add relay/token below or build secret for hands-free POST)" else "",
+                    style = MaterialTheme.typography.labelMedium.tabular(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilledTonalButton(
+                        onClick = { viewModel.flushDiagnosticReports() },
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Flush Queue (${diag.pendingCount})")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            liveLogcatSnapshot = TubiacLogcat.captureSystemAndAppLogcat(150)
+                            showLogcatConsole = !showLogcatConsole
+                        },
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (showLogcatConsole) "Hide Logcat" else "View Logcat")
+                    }
+                }
+                val latestPending = diag.latestPendingIssue
+                if (latestPending != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val titleEnc = Uri.encode(latestPending.title)
+                                val bodyEnc = Uri.encode(AutoIssueReporter.formatIssueMarkdown(latestPending).take(6_000))
+                                openUrl("$ISSUES_URL/new?labels=bug&title=$titleEnc&body=$bodyEnc")
+                            },
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Open Queued Issue on GitHub")
+                        }
+                    }
+                }
+                if (showLogcatConsole) {
+                    val displayedLog = liveLogcatSnapshot.ifBlank {
+                        vmState.logcatEntries.takeLast(80)
+                            .joinToString("\n") { "${it.timestamp} ${it.level}/${it.tag}: ${it.message}" }
+                            .ifBlank { "No Logcat events captured yet." }
+                    }
+                    MatteCard(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest) {
+                        Text(
+                            text = displayedLog,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            liveLogcatSnapshot = TubiacLogcat.captureSystemAndAppLogcat(150)
+                        }) { Text("Refresh Logcat") }
+                        TextButton(onClick = {
+                            copyToClipboard("Tubiac Logcat", displayedLog)
+                        }) { Text("Copy Logcat") }
+                        TextButton(onClick = {
+                            viewModel.clearDiagnostics()
+                            liveLogcatSnapshot = ""
+                        }) {
+                            Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Clear")
+                        }
+                    }
+                    OutlinedTextField(
+                        value = relayUrlDraft,
+                        onValueChange = { relayUrlDraft = it },
+                        label = { Text("Optional Issue Webhook Relay URL") },
+                        placeholder = { Text("https://your-relay.workers.dev/report") },
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(
+                        onClick = {
+                            viewModel.updateSettings { it.copy(customIssueRelayUrl = relayUrlDraft.trim()) }
+                        },
+                    ) { Text("Save Relay URL") }
                 }
             }
         }

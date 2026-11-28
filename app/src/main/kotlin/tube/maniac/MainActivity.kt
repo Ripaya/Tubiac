@@ -58,6 +58,7 @@ import tube.maniac.core.designsystem.components.ExpressiveEmptyState
 import tube.maniac.core.designsystem.components.MatteBackground
 import tube.maniac.core.designsystem.components.matteGrain
 import tube.maniac.core.designsystem.theme.TubiacTheme
+import tube.maniac.core.diagnostics.AutoIssueReporter
 import tube.maniac.core.extension.loader.LocalSource
 import tube.maniac.core.extension.loader.RepoIndexDecoder
 import tube.maniac.core.network.NetworkRuntimeConfig
@@ -137,6 +138,15 @@ class MainActivity : FragmentActivity() {
                 networkConfig.dohProvider.set(settings.dohProvider)
                 networkConfig.userAgent.set(settings.customUserAgent)
                 networkConfig.spoofXRequestedWith.set(settings.spoofXRequestedWith)
+            }
+            LaunchedEffect(settings.autoReportIssuesEnabled, settings.customIssueRelayUrl) {
+                AutoIssueReporter.updatePreferences(
+                    enabled = settings.autoReportIssuesEnabled,
+                    customRelayUrl = settings.customIssueRelayUrl,
+                )
+                if (settings.autoReportIssuesEnabled && AutoIssueReporter.state.value.pendingCount > 0) {
+                    AutoIssueReportWorker.enqueue(this@MainActivity)
+                }
             }
             LaunchedEffect(settings.localSourceTreeUri) {
                 localSource.setRootTreeUri(settings.localSourceTreeUri)

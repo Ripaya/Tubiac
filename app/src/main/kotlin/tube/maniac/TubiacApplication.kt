@@ -19,7 +19,10 @@ import dagger.hilt.android.HiltAndroidApp
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
 import kotlinx.serialization.json.Json
+import okhttp3.CookieJar
 import okhttp3.OkHttpClient
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.TubiacLogcat
 import tube.maniac.core.extension.loader.ExtensionInstallBridge
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.network.NetworkRuntimeConfig
@@ -58,11 +61,23 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
 
     override fun onCreate() {
         super.onCreate()
+        AutoIssueReporter.initialize(
+            context = this,
+            versionName = BuildConfig.VERSION_NAME,
+            versionCode = BuildConfig.VERSION_CODE.toLong(),
+            defaultRelayUrl = BuildConfig.ISSUE_RELAY_URL,
+            defaultGitHubToken = BuildConfig.ISSUE_GITHUB_TOKEN,
+            onPendingQueued = { AutoIssueReportWorker.enqueue(this) },
+        )
+        TubiacLogcat.i("TubiacApp", "Application started v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+
         // Populate Injekt registry eagerly before any extension classloader initialization runs
         ExtensionNetworkBridge.sharedClient = okHttpClient
         ExtensionNetworkBridge.userAgentProvider = { networkConfig.userAgent.get() }
         registerInjekt<Application>(this)
         registerInjekt<Context>(this)
+        registerInjekt<OkHttpClient>(okHttpClient)
+        registerInjekt<CookieJar>(okHttpClient.cookieJar)
         registerInjekt(NetworkHelper())
         registerInjekt(json)
 
@@ -79,6 +94,10 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
             pkgFilter,
             ContextCompat.RECEIVER_EXPORTED,
         )
+
+        if (AutoIssueReporter.state.value.pendingCount > 0) {
+            AutoIssueReportWorker.enqueue(this)
+        }
     }
 
     override val workManagerConfiguration: Configuration

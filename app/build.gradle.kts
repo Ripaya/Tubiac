@@ -19,6 +19,9 @@ val signingProps = Properties().apply {
 fun signingValue(envName: String, propName: String): String? =
     System.getenv(envName)?.takeIf { it.isNotBlank() } ?: signingProps.getProperty(propName)?.takeIf { it.isNotBlank() }
 
+fun escapeBuildConfigString(raw: String?): String =
+    (raw ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
     namespace = "tube.maniac"
     compileSdk {
@@ -33,6 +36,8 @@ android {
         targetSdk = 36
         versionCode = System.getenv("TUBIAC_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("TUBIAC_VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.0-alpha"
+        buildConfigField("String", "ISSUE_RELAY_URL", "\"${escapeBuildConfigString(System.getenv("TUBIAC_ISSUE_RELAY_URL"))}\"")
+        buildConfigField("String", "ISSUE_GITHUB_TOKEN", "\"${escapeBuildConfigString(System.getenv("TUBIAC_ISSUE_TOKEN"))}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         androidResources {

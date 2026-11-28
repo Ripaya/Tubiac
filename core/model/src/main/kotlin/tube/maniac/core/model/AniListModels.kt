@@ -206,6 +206,8 @@ data class AppSettings(
     val syncMode: SyncMode = SyncMode.REALTIME_ON_COMPLETE,
     val syncPolicy: AniListSyncPolicy = AniListSyncPolicy(),
     val readerPreferences: ReaderPreferences = ReaderPreferences(),
+    val autoReportIssuesEnabled: Boolean = true,
+    val customIssueRelayUrl: String = "",
 ) {
     companion object {
         const val DEFAULT_USER_AGENT =

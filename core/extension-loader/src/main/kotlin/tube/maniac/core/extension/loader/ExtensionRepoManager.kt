@@ -14,6 +14,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import tube.maniac.core.database.dao.ExtensionRepoDao
 import tube.maniac.core.database.entity.toDomain
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.TubiacLogcat
 import tube.maniac.core.model.ExtensionInfo
 import tube.maniac.core.model.ExtensionRepo
 import java.io.File
@@ -100,7 +102,15 @@ class ExtensionRepoManager @Inject constructor(
         return when {
             url.endsWith("repo.json", ignoreCase = true) -> {
                 val meta = json.decodeFromString<RepoMetaManifestDto>(rawBytes.toString(Charsets.UTF_8))
-                val targetIndex = meta.indexV2 ?: meta.indexV1 ?: "$fallbackBase/index.pb"
+                val rawTarget = meta.indexV2 ?: meta.indexV1 ?: "$fallbackBase/index.pb"
+                val targetIndex = when {
+                    rawTarget.startsWith("http://") || rawTarget.startsWith("https://") -> rawTarget
+                    rawTarget.startsWith("/") -> {
+                        val schemeHost = url.substringBefore("://") + "://" + url.substringAfter("://").substringBefore("/")
+                        "$schemeHost$rawTarget"
+                    }
+                    else -> "$fallbackBase/${rawTarget.trimStart('/')}"
+                }
                 val nested = fetchCandidate(targetIndex, repo, installedByPkg)
                 nested.copy(
                     repoName = meta.meta?.name ?: nested.repoName,
@@ -177,17 +187,35 @@ class ExtensionRepoManager @Inject constructor(
             val extDir = File(context.filesDir, "extensions").apply { mkdirs() }
             val tempFile = File(extDir, "${extension.pkgName}.apk.tmp")
             val finalFile = File(extDir, "${extension.pkgName}.apk")
+            if (tempFile.exists()) {
+                runCatching { tempFile.setWritable(true) }
+                tempFile.delete()
+            }
             if (finalFile.exists()) {
                 runCatching { finalFile.setWritable(true) }
                 finalFile.delete()
             }
             tempFile.writeBytes(bytes)
-            require(tempFile.renameTo(finalFile)) { "Could not write sandbox extension APK" }
-            finalFile.setReadOnly()
+            // Mark read-only BEFORE renaming so Android 14+ PathClassLoader W^X policy accepts it atomically
+            runCatching { tempFile.setReadOnly() }
+            if (!tempFile.renameTo(finalFile)) {
+                tempFile.copyTo(finalFile, overwrite = true)
+                tempFile.delete()
+                runCatching { finalFile.setReadOnly() }
+            }
 
+            TubiacLogcat.i("ExtensionRepoManager", "Extracted ${extension.pkgName} (${bytes.size} bytes) to sandbox")
             ExtensionInstallBridge.lastInstallError = null
             ExtensionInstallBridge.onInstallSuccess?.invoke()
             Unit
+        }.onFailure { err ->
+            ExtensionInstallBridge.lastInstallError = err.message
+            AutoIssueReporter.reportRuntimeBug(
+                category = "extension-install",
+                title = "[Extension] Sandbox extract failed for ${extension.pkgName}",
+                detail = "apkUrl=${extension.apkUrl ?: extension.apkName}",
+                throwable = err,
+            )
         }
     }
 
@@ -245,13 +273,26 @@ class ExtensionRepoManager @Inject constructor(
     }
 
     private fun resolveApkUrl(extension: ExtensionInfo): String {
-        extension.apkUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let { return it }
+        val rawApk = extension.apkUrl?.trim()
+        val repoBaseUrl = extension.repoBaseUrl?.trimEnd('/')
+        if (!rawApk.isNullOrBlank()) {
+            when {
+                rawApk.startsWith("http://") || rawApk.startsWith("https://") -> return rawApk
+                rawApk.startsWith("/") && !repoBaseUrl.isNullOrBlank() -> {
+                    val origin = repoBaseUrl.substringBefore("://") + "://" + repoBaseUrl.substringAfter("://").substringBefore("/")
+                    return "$origin$rawApk"
+                }
+                rawApk.contains("/") && !repoBaseUrl.isNullOrBlank() -> {
+                    return "$repoBaseUrl/${rawApk.trimStart('/')}"
+                }
+            }
+        }
         val apkName = extension.apkName
         if (!apkName.isNullOrBlank() && (apkName.startsWith("http://") || apkName.startsWith("https://"))) {
             return apkName
         }
-        val base = requireNotNull(extension.repoBaseUrl) { "Missing repository base URL" }
-        val name = requireNotNull(apkName) { "Missing APK filename" }
+        val base = requireNotNull(extension.repoBaseUrl) { "Missing repository base URL" }.trimEnd('/')
+        val name = requireNotNull(apkName ?: rawApk?.substringAfterLast("/")) { "Missing APK filename" }
         return "$base/apk/$name"
     }
 

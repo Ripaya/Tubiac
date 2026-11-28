@@ -23,6 +23,9 @@
 -keep interface androidx.preference.** { *; }
 -keep class kotlinx.serialization.** { *; }
 -keep interface kotlinx.serialization.** { *; }
+-keep class kotlinx.serialization.protobuf.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep interface kotlinx.coroutines.** { *; }
 -keep class tube.maniac.core.extension.** { *; }
 
 -dontwarn keiyoushi.**
@@ -33,6 +36,7 @@
 -dontwarn okhttp3.**
 -dontwarn okio.**
 -dontwarn kotlinx.serialization.**
+-dontwarn kotlinx.coroutines.**
 -dontwarn androidx.preference.**
 -dontwarn javax.annotation.**
 -dontwarn org.codehaus.mojo.animal_sniffer.**

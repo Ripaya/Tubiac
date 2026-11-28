@@ -3,9 +3,13 @@ package uy.kohesive.injekt.api
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.Type
 
+interface TypeReference<T> {
+    val type: Type
+}
+
 @Suppress("unused")
-abstract class FullTypeReference<T> {
-    val type: Type by lazy {
+abstract class FullTypeReference<T> : TypeReference<T> {
+    override val type: Type by lazy {
         val superClass = javaClass.genericSuperclass
         if (superClass is ParameterizedType) {
             superClass.actualTypeArguments[0]
@@ -17,7 +21,9 @@ abstract class FullTypeReference<T> {
 
 interface InjektFactory {
     fun <R : Any> getInstance(forType: Type): R
+    fun <R : Any> getInstance(forType: Type, key: Any): R = getInstance(forType)
     fun <R : Any> getInstanceOrNull(forType: Type): R? = runCatching { getInstance<R>(forType) }.getOrNull()
+    fun <R : Any> getInstanceOrNull(forType: Type, key: Any): R? = getInstanceOrNull(forType)
 }
 
 interface InjektScope : InjektFactory {
@@ -26,3 +32,6 @@ interface InjektScope : InjektFactory {
 
 inline fun <reified T : Any> InjektFactory.get(): T =
     getInstance(object : FullTypeReference<T>() {}.type)
+
+inline fun <reified T : Any> InjektFactory.get(key: Any): T =
+    getInstance(object : FullTypeReference<T>() {}.type, key)

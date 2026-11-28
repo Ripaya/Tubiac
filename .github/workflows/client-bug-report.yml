@@ -1,0 +1,65 @@
+name: Client Bug & Logcat Issue Receiver
+
+on:
+  repository_dispatch:
+    types: [tubiac-bug-report]
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Issue title
+        required: true
+      body:
+        description: Markdown body with stacktrace and logcat
+        required: true
+      fingerprint:
+        description: SHA-256 fingerprint for deduplication
+        required: false
+        default: ""
+      category:
+        description: Diagnostic category
+        required: false
+        default: "bug"
+
+permissions:
+  issues: write
+
+jobs:
+  file-or-update-issue:
+    name: Create or Deduplicate Bug Issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process automated client report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_TITLE: ${{ github.event.client_payload.title || inputs.title }}
+          REPORT_BODY: ${{ github.event.client_payload.body || inputs.body }}
+          REPORT_FP: ${{ github.event.client_payload.fingerprint || inputs.fingerprint }}
+          REPORT_CAT: ${{ github.event.client_payload.category || inputs.category }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+
+          title = os.environ.get("REPORT_TITLE", "").strip()[:120] or "[Auto] Client Bug Report"
+          body = os.environ.get("REPORT_BODY", "").strip()
+          fp = os.environ.get("REPORT_FP", "").strip()
+          cat = os.environ.get("REPORT_CAT", "bug").strip() or "bug"
+          if not body:
+              raise SystemExit("Empty report body")
+
+          marker = f"<!-- tubiac-fp:{fp} -->" if fp else ""
+          existing_num = None
+          if marker:
+              out = subprocess.check_output([
+                  "gh", "issue", "list", "--state", "open", "--search", f'"{marker}" in:body', "--json", "number"
+              ]).decode()
+              items = json.loads(out)
+              if items:
+                  existing_num = items[0]["number"]
+
+          if existing_num is not None:
+              comment = f"### Additional Automated Report\n\n{body}"
+              subprocess.run(["gh", "issue", "comment", str(existing_num), "--body", comment], check=True)
+          else:
+              subprocess.run(["gh", "label", "create", "auto-reported", "--color", "D9483B", "--force"], check=False)
+              subprocess.run(["gh", "issue", "create", "--title", title, "--body", body, "--label", "bug,auto-reported"], check=True)
+          PY

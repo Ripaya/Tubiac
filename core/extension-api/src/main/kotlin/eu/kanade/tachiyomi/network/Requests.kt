@@ -117,3 +117,23 @@ fun HEAD(
     .headers(headers)
     .head()
     .build()
+
+fun PATCH(
+    url: String,
+    headers: Headers = DEFAULT_HEADERS,
+    body: RequestBody = DEFAULT_BODY,
+): Request = Request.Builder()
+    .url(url)
+    .headers(headers)
+    .patch(body)
+    .build()
+
+fun PATCH(
+    url: HttpUrl,
+    headers: Headers = DEFAULT_HEADERS,
+    body: RequestBody = DEFAULT_BODY,
+): Request = Request.Builder()
+    .url(url)
+    .headers(headers)
+    .patch(body)
+    .build()

@@ -99,6 +99,8 @@ import tube.maniac.core.designsystem.components.MatteSegmentedTabs
 import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.unwrapRoot
 import tube.maniac.core.extension.loader.ExtensionExtrasExtractor
 import tube.maniac.core.extension.loader.ExtensionRepoManager
 import tube.maniac.core.extension.loader.LocalSource
@@ -140,6 +142,7 @@ data class BrowseUiState(
     val activeTab: BrowseSubTab = BrowseSubTab.SOURCES,
     val sources: List<Source> = emptyList(),
     val installedExtensions: List<ExtensionInfo> = emptyList(),
+    val extensionPrimarySourceIds: Map<String, Long> = emptyMap(),
     val loadErrors: Map<String, String> = emptyMap(),
     val remoteExtensions: List<ExtensionInfo> = emptyList(),
     val repos: List<ExtensionRepo> = emptyList(),
@@ -180,6 +183,9 @@ class BrowseViewModel @Inject constructor(
                 activeTab = tab,
                 sources = sources,
                 installedExtensions = installed.map { it.info },
+                extensionPrimarySourceIds = installed.mapNotNull { ext ->
+                    ext.sources.firstOrNull()?.id?.let { sid -> ext.info.pkgName to sid }
+                }.toMap(),
                 loadErrors = installed.mapNotNull { ext ->
                     ext.loadError?.let { ext.info.name to it }
                 }.toMap(),
@@ -296,7 +302,8 @@ class BrowseViewModel @Inject constructor(
             repoManager.installExtensionApk(ext)
                 .onSuccess {
                     sourceManager.reloadExtensions()
-                    val installedMap = sourceManager.installedExtensions.value.associate { it.info.pkgName to it.info }
+                    val loadedList = sourceManager.installedExtensions.value
+                    val installedMap = loadedList.associate { it.info.pkgName to it.info }
                     val updatedRemote = remoteExtensionsFlow.value.map { item ->
                         if (item.pkgName == ext.pkgName) {
                             item.copy(
@@ -311,9 +318,35 @@ class BrowseViewModel @Inject constructor(
                         }
                     }
                     remoteExtensionsFlow.value = updatedRemote
-                    statusMessageFlow.value = "${ext.name} extracted & ready in Sources."
+                    val justLoaded = loadedList.firstOrNull { it.info.pkgName == ext.pkgName }
+                    val loadedSources = justLoaded?.sources.orEmpty()
+                    statusMessageFlow.value = when {
+                        justLoaded?.loadError != null -> "${ext.name} load failed: ${justLoaded.loadError}"
+                        loadedSources.isEmpty() -> "${ext.name} extracted, but no Source entries loaded."
+                        else -> "${ext.name} loaded (${loadedSources.size} source(s) ready)."
+                    }
                 }
-                .onFailure { statusMessageFlow.value = it.message ?: "Install failed" }
+                .onFailure { err ->
+                    val root = err.unwrapRoot()
+                    statusMessageFlow.value = root.message ?: "Install failed"
+                }
+        }
+    }
+
+    fun installExtensionSystem(ext: ExtensionInfo) {
+        viewModelScope.launch {
+            statusMessageFlow.value = "Launching OS installer for ${ext.name}..."
+            repoManager.installSystemApk(ext)
+                .onFailure { err ->
+                    val root = err.unwrapRoot()
+                    AutoIssueReporter.reportRuntimeBug(
+                        category = "extension-install",
+                        title = "[Extension] System PackageInstaller failed for ${ext.pkgName}",
+                        detail = root.message ?: "System install failed",
+                        throwable = root,
+                    )
+                    statusMessageFlow.value = root.message ?: "System install failed"
+                }
         }
     }
 
@@ -487,8 +520,10 @@ fun BrowseScreen(
                         onSelectTab = viewModel::selectExtensionTab,
                         onSelectLang = viewModel::selectLang,
                         onInstall = viewModel::installExtension,
+                        onInstallSystem = viewModel::installExtensionSystem,
                         onUninstall = viewModel::uninstallExtension,
                         onInspectExtension = viewModel::inspectInstalledExtension,
+                        onOpenSource = onOpenSource,
                     )
 
                     BrowseSubTab.REPOS -> ReposList(
@@ -799,8 +834,10 @@ private fun ExtensionsList(
     onSelectTab: (ExtensionFilterTab) -> Unit,
     onSelectLang: (String) -> Unit,
     onInstall: (ExtensionInfo) -> Unit,
+    onInstallSystem: (ExtensionInfo) -> Unit,
     onUninstall: (ExtensionInfo) -> Unit,
     onInspectExtension: (ExtensionInfo) -> Unit,
+    onOpenSource: (Long) -> Unit,
 ) {
     val dynamicLangs = remember(state.installedExtensions, state.remoteExtensions) {
         val detected = (state.installedExtensions + state.remoteExtensions)
@@ -930,7 +967,16 @@ private fun ExtensionsList(
                             }
                             when (ext.installState) {
                                 ExtensionInstallState.INSTALLED -> {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    val primarySourceId = state.extensionPrimarySourceIds[ext.pkgName]
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        if (primarySourceId != null) {
+                                            FilledTonalButton(
+                                                onClick = { onOpenSource(primarySourceId) },
+                                                shape = MaterialTheme.shapes.small,
+                                            ) {
+                                                Text("Open")
+                                            }
+                                        }
                                         IconButton(onClick = { onInspectExtension(ext) }) {
                                             Icon(Icons.Rounded.Tune, contentDescription = "Extension settings & cookies")
                                         }
@@ -945,10 +991,15 @@ private fun ExtensionsList(
                                     }
                                 }
                                 else -> {
-                                    FilledTonalButton(onClick = { onInstall(ext) }, shape = MaterialTheme.shapes.small) {
-                                        Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Extract")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        FilledTonalButton(onClick = { onInstall(ext) }, shape = MaterialTheme.shapes.small) {
+                                            Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Extract")
+                                        }
+                                        OutlinedButton(onClick = { onInstallSystem(ext) }, shape = MaterialTheme.shapes.small) {
+                                            Text("OS")
+                                        }
                                     }
                                 }
                             }

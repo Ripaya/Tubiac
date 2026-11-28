@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import tube.maniac.core.anilist.AniListGraphQlClient
 import tube.maniac.core.anilist.AniListSyncEngine
 import tube.maniac.core.database.BackupFormat
@@ -79,6 +80,10 @@ import tube.maniac.core.designsystem.components.TubiacAppMark
 import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.DiagnosticReporterState
+import tube.maniac.core.diagnostics.LogcatEntry
+import tube.maniac.core.diagnostics.TubiacLogcat
 import tube.maniac.core.model.AniListSyncPolicy
 import tube.maniac.core.model.AniListUser
 import tube.maniac.core.model.AnimationSpeed
@@ -103,6 +108,8 @@ data class SettingsUiState(
     val anilistUser: AniListUser? = null,
     val rateLimitStatus: RateLimitStatus = RateLimitStatus(),
     val statusFeedback: String? = null,
+    val diagnosticsState: DiagnosticReporterState = DiagnosticReporterState(),
+    val logcatEntries: List<LogcatEntry> = emptyList(),
 )
 
 @HiltViewModel
@@ -114,17 +121,29 @@ class SettingsViewModel @Inject constructor(
     private val aniListSyncEngine: AniListSyncEngine,
     private val networkConfig: NetworkRuntimeConfig,
     private val cookieJar: WebViewCookieJar,
+    private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
     private val feedbackFlow = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<SettingsUiState> = combine(
-        settingsRepository.settingsFlow,
-        settingsRepository.anilistUserFlow,
-        aniListClient.rateLimiter.status,
-        feedbackFlow,
-    ) { settings, user, rateLimit, feedback ->
-        SettingsUiState(settings, user, rateLimit, feedback)
+        combine(
+            settingsRepository.settingsFlow,
+            settingsRepository.anilistUserFlow,
+            aniListClient.rateLimiter.status,
+            feedbackFlow,
+        ) { settings, user, rateLimit, feedback ->
+            listOf(settings, user, rateLimit, feedback)
+        },
+        AutoIssueReporter.state,
+        TubiacLogcat.entries,
+    ) { core, diagState, logs ->
+        @Suppress("UNCHECKED_CAST")
+        val settings = core[0] as AppSettings
+        val user = core[1] as AniListUser?
+        val rateLimit = core[2] as RateLimitStatus
+        val feedback = core[3] as String?
+        SettingsUiState(settings, user, rateLimit, feedback, diagState, logs)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun clearFeedback() {
@@ -138,8 +157,26 @@ class SettingsViewModel @Inject constructor(
             networkConfig.dohProvider.set(updated.dohProvider)
             networkConfig.userAgent.set(updated.customUserAgent)
             networkConfig.spoofXRequestedWith.set(updated.spoofXRequestedWith)
+            AutoIssueReporter.updatePreferences(updated.autoReportIssuesEnabled, updated.customIssueRelayUrl)
             AutoBackupWorker.schedule(context, updated.autoBackupFrequency)
         }
+    }
+
+    fun flushDiagnosticReports() {
+        viewModelScope.launch {
+            val count = AutoIssueReporter.flushPendingReports(okHttpClient)
+            feedbackFlow.value = if (count > 0) {
+                "Submitted $count bug report(s) to GitHub."
+            } else {
+                AutoIssueReporter.state.value.lastStatus
+            }
+        }
+    }
+
+    fun clearDiagnostics() {
+        TubiacLogcat.clear()
+        AutoIssueReporter.clearPendingAndHistory()
+        feedbackFlow.value = "Cleared local Logcat buffer and diagnostic queue."
     }
 
     fun updateSyncPolicy(transform: (AniListSyncPolicy) -> AniListSyncPolicy) {
@@ -1010,6 +1047,12 @@ fun SettingsPrivacyScreen(
                     checked = settings.showNsfwExtensions,
                     onCheckedChange = { v -> viewModel.updateSettings { it.copy(showNsfwExtensions = v) } },
                 )
+                SettingsToggleRow(
+                    title = "Automatic Crash & Logcat Reporting",
+                    subtitle = "Automatically send redacted bugs, crashes & extension failures to GitHub Issues",
+                    checked = settings.autoReportIssuesEnabled,
+                    onCheckedChange = { v -> viewModel.updateSettings { it.copy(autoReportIssuesEnabled = v) } },
+                )
             }
         }
 
@@ -1134,7 +1177,7 @@ internal fun SettingsMatteGroup(
 }
 
 @Composable
-private fun SettingsToggleRow(
+internal fun SettingsToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,

@@ -105,6 +105,8 @@ import tube.maniac.core.designsystem.components.TabularBadge
 import tube.maniac.core.designsystem.components.TubiacTopBar
 import tube.maniac.core.designsystem.theme.kicker
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.unwrapRoot
 import tube.maniac.core.extension.loader.ExtensionExtrasExtractor
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.AniListMedia
@@ -347,16 +349,27 @@ class SeriesDetailViewModel @Inject constructor(
                     chapterDao.upsertAll(newEntities)
                 }
             }.onFailure { err ->
-                val url = when (err) {
-                    is CloudflareChallengeException -> err.challengeUrl
-                    is IpBlockedException -> err.blockedUrl
-                    else -> (source as? HttpSource)?.let {
-                        runCatching {
-                            it.getMangaUrl(SManga.create().apply { url = entity.url; title = entity.title })
-                        }.getOrNull()
+                val root = err.unwrapRoot()
+                val url = when (root) {
+                    is CloudflareChallengeException -> root.challengeUrl
+                    is IpBlockedException -> root.blockedUrl
+                    else -> {
+                        if (root !is kotlinx.coroutines.CancellationException) {
+                            AutoIssueReporter.reportRuntimeBug(
+                                category = "series-detail",
+                                title = "[Detail] Failed chapter refresh via ${source.name}",
+                                detail = "series=${entity.title}, url=${entity.url}",
+                                throwable = root,
+                            )
+                        }
+                        (source as? HttpSource)?.let {
+                            runCatching {
+                                it.getMangaUrl(SManga.create().apply { url = entity.url; title = entity.title })
+                            }.getOrNull()
+                        }
                     }
                 }
-                errorFlow.value = (err.message ?: "Failed to refresh chapters") to url
+                errorFlow.value = (root.message ?: "Failed to refresh chapters") to url
             }
             refreshingFlow.value = false
         }
