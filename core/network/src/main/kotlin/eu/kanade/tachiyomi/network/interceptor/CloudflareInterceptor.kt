@@ -192,6 +192,9 @@ open class CloudflareInterceptor(
                 cm.setAcceptCookie(true)
                 val origin = "${originalRequest.url.scheme}://${originalRequest.url.host}"
                 cm.setCookie(origin, "cf_clearance=; Max-Age=0")
+                originalRequest.url.topPrivateDomain()?.let { domain ->
+                    cm.setCookie("${originalRequest.url.scheme}://.$domain", "cf_clearance=; Max-Age=0; Domain=.$domain")
+                }
                 cm.flush()
 
                 val wv = WebView(ctx).apply {
@@ -212,11 +215,15 @@ open class CloudflareInterceptor(
                             latch.countDown()
                             return
                         }
-                        if (url == challengeUrl && !sawChallenge && view != null) {
+                        if (url != null && !url.startsWith("about:") && view != null) {
                             view.evaluateJavascript("document.title") { rawTitle ->
                                 val title = rawTitle.orEmpty().lowercase()
-                                if (!title.contains("just a moment") && !title.contains("attention required")) {
-                                    if (!cm.getCookie(originalRequest.url.toString()).isNullOrBlank()) {
+                                val isChallengeTitle = title.contains("just a moment") ||
+                                    title.contains("attention required") ||
+                                    title.contains("access denied") ||
+                                    title.contains("cloudflare")
+                                if (!isChallengeTitle) {
+                                    if (sawChallenge || !cm.getCookie(originalRequest.url.toString()).isNullOrBlank()) {
                                         bypassed.set(true)
                                     }
                                     latch.countDown()

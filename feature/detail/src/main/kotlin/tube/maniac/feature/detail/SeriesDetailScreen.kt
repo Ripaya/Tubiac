@@ -162,6 +162,7 @@ class SeriesDetailViewModel @Inject constructor(
     private val sortDescFlow = MutableStateFlow(true)
     private val selectedChaptersFlow = MutableStateFlow<Set<Long>>(emptySet())
     private val refreshingFlow = MutableStateFlow(false)
+    private val refreshingIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     private val errorFlow = MutableStateFlow<Pair<String?, String?>>(null to null)
     private val commentsFlow = MutableStateFlow<List<ExtractedComment>>(emptyList())
     private val anilistCommunityFlow = MutableStateFlow<Pair<List<AniListReview>, List<AniListThread>>>(emptyList<AniListReview>() to emptyList())
@@ -299,100 +300,119 @@ class SeriesDetailViewModel @Inject constructor(
 
     fun refreshFromSource(targetSeriesId: Long? = seriesIdFlow.value) {
         val seriesId = targetSeriesId ?: return
+        if (!refreshingIds.add(seriesId)) return
         viewModelScope.launch(Dispatchers.IO) {
-            val entity = seriesDao.getById(seriesId) ?: return@launch
-            if (entity.sourceId < 0L) return@launch
-            val source = sourceManager.getSource(entity.sourceId) ?: return@launch
-            refreshingFlow.value = true
-            errorFlow.value = null to null
-            runCatching {
-                val sManga = SManga.create().apply {
-                    url = entity.url
-                    title = entity.title
-                }
-                val httpSource = source as? HttpSource
-                val existingEntities = chapterDao.getBySeries(seriesId)
-                val existingSChapters = existingEntities.map { ch ->
-                    SChapter.create().apply {
-                        url = ch.url
-                        name = ch.name
-                        chapter_number = ch.chapterNumber
-                        scanlator = ch.scanlator
-                        date_upload = ch.dateUpload
+            try {
+                val entity = seriesDao.getById(seriesId) ?: return@launch
+                if (entity.sourceId < 0L) return@launch
+                val source = sourceManager.getSource(entity.sourceId) ?: return@launch
+                refreshingFlow.value = true
+                errorFlow.value = null to null
+                runCatching {
+                    val sManga = SManga.create().apply {
+                        url = entity.url
+                        title = entity.title
                     }
-                }
-                val update = source.getMangaUpdate(
-                    manga = sManga,
-                    chapters = existingSChapters,
-                    fetchDetails = true,
-                    fetchChapters = true,
-                )
-                val details = runCatching { update.manga() }.getOrNull()
-                if (details != null) {
-                    sManga.copyFrom(details)
-                    seriesDao.update(
-                        entity.copy(
-                            author = details.author ?: entity.author,
-                            artist = details.artist ?: entity.artist,
-                            description = details.description ?: entity.description,
-                            coverUrl = details.thumbnail_url ?: entity.coverUrl,
-                            bannerUrl = details.banner ?: entity.bannerUrl,
-                            genres = details.genres.takeIf { it.isNotEmpty() } ?: entity.genres,
-                            publicationStatus = when (details.status) {
-                                SManga.ONGOING -> PublicationStatus.ONGOING
-                                SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> PublicationStatus.COMPLETED
-                                SManga.ON_HIATUS -> PublicationStatus.HIATUS
-                                SManga.CANCELLED -> PublicationStatus.CANCELLED
-                                else -> entity.publicationStatus
-                            },
-                            lastUpdated = System.currentTimeMillis(),
-                        ),
+                    val httpSource = source as? HttpSource
+                    val base = httpSource?.baseUrl
+                    val existingEntities = chapterDao.getBySeries(seriesId)
+                    val existingSChapters = existingEntities.map { ch ->
+                        SChapter.create().apply {
+                            url = ch.url
+                            name = ch.name
+                            chapter_number = ch.chapterNumber
+                            scanlator = ch.scanlator
+                            date_upload = ch.dateUpload
+                        }
+                    }
+                    val update = source.getMangaUpdate(
+                        manga = sManga,
+                        chapters = existingSChapters,
+                        fetchDetails = true,
+                        fetchChapters = true,
                     )
-                }
-                val remoteChapters = update.chapters()
-                val existingUrls = existingEntities.map { it.url }.toSet()
-                val newEntities = remoteChapters
-                    .filterNot { it.url in existingUrls }
-                    .mapIndexed { idx, ch ->
-                        httpSource?.let { hs -> runCatching { hs.prepareNewChapter(ch, sManga) } }
-                        ChapterEntity(
-                            seriesId = seriesId,
-                            url = ch.url,
-                            name = ch.name,
-                            chapterNumber = ch.chapter_number,
-                            scanlator = ch.scanlator,
-                            dateUpload = ch.date_upload,
-                            dateFetch = System.currentTimeMillis(),
-                            sourceOrder = idx,
+                    val details = runCatching { update.manga() }.getOrNull()
+                    if (details != null) {
+                        sManga.copyFrom(details)
+                        seriesDao.update(
+                            entity.copy(
+                                author = details.author ?: entity.author,
+                                artist = details.artist ?: entity.artist,
+                                description = details.description ?: entity.description,
+                                coverUrl = normalizeDetailMediaUrl(details.thumbnail_url, base) ?: entity.coverUrl,
+                                bannerUrl = normalizeDetailMediaUrl(details.banner, base) ?: entity.bannerUrl,
+                                genres = details.genres.takeIf { it.isNotEmpty() } ?: entity.genres,
+                                publicationStatus = when (details.status) {
+                                    SManga.ONGOING -> PublicationStatus.ONGOING
+                                    SManga.COMPLETED, SManga.PUBLISHING_FINISHED -> PublicationStatus.COMPLETED
+                                    SManga.ON_HIATUS -> PublicationStatus.HIATUS
+                                    SManga.CANCELLED -> PublicationStatus.CANCELLED
+                                    else -> entity.publicationStatus
+                                },
+                                lastUpdated = System.currentTimeMillis(),
+                            ),
                         )
                     }
-                if (newEntities.isNotEmpty()) {
-                    chapterDao.upsertAll(newEntities)
-                }
-            }.onFailure { err ->
-                val root = err.unwrapRoot()
-                val url = when (root) {
-                    is CloudflareChallengeException -> root.challengeUrl
-                    is IpBlockedException -> root.blockedUrl
-                    else -> {
-                        if (root !is kotlinx.coroutines.CancellationException) {
-                            AutoIssueReporter.reportRuntimeBug(
-                                category = "series-detail",
-                                title = "[Detail] Failed chapter refresh via ${source.name}",
-                                detail = "series=${entity.title}, url=${entity.url}",
-                                throwable = root,
+                    val remoteChapters = update.chapters()
+                    val existingUrls = existingEntities.map { it.url }.toSet()
+                    val newEntities = remoteChapters
+                        .filterNot { it.url in existingUrls }
+                        .mapIndexed { idx, ch ->
+                            httpSource?.let { hs -> runCatching { hs.prepareNewChapter(ch, sManga) } }
+                            ChapterEntity(
+                                seriesId = seriesId,
+                                url = ch.url,
+                                name = ch.name,
+                                chapterNumber = ch.chapter_number,
+                                scanlator = ch.scanlator,
+                                dateUpload = ch.date_upload,
+                                dateFetch = System.currentTimeMillis(),
+                                sourceOrder = idx,
                             )
                         }
-                        (source as? HttpSource)?.let {
-                            runCatching {
-                                it.getMangaUrl(SManga.create().apply { url = entity.url; title = entity.title })
-                            }.getOrNull()
+                    if (newEntities.isNotEmpty()) {
+                        chapterDao.upsertAll(newEntities)
+                    }
+                }.onFailure { err ->
+                    val root = err.unwrapRoot()
+                    val url = when (root) {
+                        is CloudflareChallengeException -> root.challengeUrl
+                        is IpBlockedException -> root.blockedUrl
+                        else -> {
+                            if (root !is kotlinx.coroutines.CancellationException) {
+                                AutoIssueReporter.reportRuntimeBug(
+                                    category = "series-detail",
+                                    title = "[Detail] Failed chapter refresh via ${source.name}",
+                                    detail = "series=${entity.title}, url=${entity.url}",
+                                    throwable = root,
+                                )
+                            }
+                            (source as? HttpSource)?.let {
+                                runCatching {
+                                    it.getMangaUrl(SManga.create().apply { url = entity.url; title = entity.title })
+                                }.getOrNull()
+                            }
                         }
                     }
+                    errorFlow.value = (root.message ?: "Failed to refresh chapters") to url
                 }
-                errorFlow.value = (root.message ?: "Failed to refresh chapters") to url
+            } finally {
+                refreshingIds.remove(seriesId)
+                refreshingFlow.value = false
             }
-            refreshingFlow.value = false
+        }
+    }
+
+    private fun normalizeDetailMediaUrl(raw: String?, baseUrl: String?): String? {
+        val trimmed = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val scheme = baseUrl?.substringBefore("://")?.takeIf { it == "http" || it == "https" } ?: "https"
+        val cleanBase = baseUrl?.trimEnd('/')
+        return when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            trimmed.startsWith("//") -> "$scheme:$trimmed"
+            trimmed.startsWith("/") && !cleanBase.isNullOrBlank() -> "$cleanBase$trimmed"
+            !cleanBase.isNullOrBlank() -> "$cleanBase/$trimmed"
+            else -> trimmed
         }
     }
 

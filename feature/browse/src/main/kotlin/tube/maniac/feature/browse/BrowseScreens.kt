@@ -1146,6 +1146,18 @@ class GlobalSearchViewModel @Inject constructor(
     fun openOrCreateSourceSeries(item: SourceSearchResult, onCreated: (Long) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val existing = seriesDao.getBySourceAndUrl(item.sourceId, item.manga.url)
+            val baseUrl = (sourceManager.getSource(item.sourceId) as? HttpSource)?.baseUrl
+            val normalizedCover = item.manga.thumbnail_url?.trim()?.let { raw ->
+                val scheme = baseUrl?.substringBefore("://")?.takeIf { it == "http" || it == "https" } ?: "https"
+                val cleanBase = baseUrl?.trimEnd('/')
+                when {
+                    raw.startsWith("http://") || raw.startsWith("https://") -> raw
+                    raw.startsWith("//") -> "$scheme:$raw"
+                    raw.startsWith("/") && !cleanBase.isNullOrBlank() -> "$cleanBase$raw"
+                    !cleanBase.isNullOrBlank() -> "$cleanBase/$raw"
+                    else -> raw
+                }
+            }
             val id = existing?.id ?: seriesDao.upsert(
                 SeriesEntity(
                     sourceId = item.sourceId,
@@ -1154,7 +1166,7 @@ class GlobalSearchViewModel @Inject constructor(
                     author = item.manga.author,
                     artist = item.manga.artist,
                     description = item.manga.description,
-                    coverUrl = item.manga.thumbnail_url,
+                    coverUrl = normalizedCover,
                     genres = item.manga.genres,
                     publicationStatus = when (item.manga.status) {
                         SManga.ONGOING -> PublicationStatus.ONGOING

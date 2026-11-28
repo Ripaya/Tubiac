@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
+import android.webkit.WebSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -136,7 +137,15 @@ class MainActivity : FragmentActivity() {
             }
             LaunchedEffect(settings.dohProvider, settings.customUserAgent, settings.spoofXRequestedWith) {
                 networkConfig.dohProvider.set(settings.dohProvider)
-                networkConfig.userAgent.set(settings.customUserAgent)
+                val effectiveUa = if (settings.customUserAgent == tube.maniac.core.model.AppSettings.DEFAULT_USER_AGENT) {
+                    runCatching { WebSettings.getDefaultUserAgent(this@MainActivity) }
+                        .getOrNull()
+                        ?.takeIf { it.isNotBlank() }
+                        ?: settings.customUserAgent
+                } else {
+                    settings.customUserAgent
+                }
+                networkConfig.userAgent.set(effectiveUa)
                 networkConfig.spoofXRequestedWith.set(settings.spoofXRequestedWith)
             }
             LaunchedEffect(settings.autoReportIssuesEnabled, settings.customIssueRelayUrl) {
