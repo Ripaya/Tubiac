@@ -48,6 +48,7 @@ dependencies {
     api(libs.androidx.compose.material.icons.extended)
 
     implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.palette.ktx)
 
     debugImplementation(libs.androidx.compose.ui.tooling)

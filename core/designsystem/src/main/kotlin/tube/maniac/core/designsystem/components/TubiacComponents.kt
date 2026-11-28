@@ -61,11 +61,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
 import tube.maniac.core.designsystem.theme.LocalIsDarkSurface
 import tube.maniac.core.designsystem.theme.LocalMatteTextureEnabled
 import tube.maniac.core.designsystem.theme.kicker
@@ -468,6 +472,7 @@ fun SeriesCoverCard(
     showDownloadBadge: Boolean = true,
     selected: Boolean = false,
     progressFraction: Float? = null,
+    coverHeaders: Map<String, String> = emptyMap(),
 ) {
     val shape = MaterialTheme.shapes.medium // 12.dp matte archival card
     Surface(
@@ -499,8 +504,17 @@ fun SeriesCoverCard(
                 .matteGrain(strength = 0.6f),
         ) {
             if (!coverUrl.isNullOrBlank()) {
+                val context = LocalContext.current
+                val model: Any = if (coverHeaders.isEmpty()) {
+                    coverUrl
+                } else {
+                    val nh = NetworkHeaders.Builder().apply {
+                        coverHeaders.forEach { (k, v) -> set(k, v) }
+                    }.build()
+                    ImageRequest.Builder(context).data(coverUrl).httpHeaders(nh).build()
+                }
                 AsyncImage(
-                    model = coverUrl,
+                    model = model,
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

@@ -3,6 +3,7 @@ package tube.maniac.core.extension.loader
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
+import android.view.ContextThemeWrapper
 import android.webkit.CookieManager
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
@@ -22,6 +23,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import tube.maniac.core.diagnostics.TubiacLogcat
 import tube.maniac.core.model.DomainCookieInfo
 import tube.maniac.core.model.ExtractedComment
 import tube.maniac.core.model.ExtractedPreferenceItem
@@ -48,14 +50,17 @@ class ExtensionExtrasExtractor @Inject constructor(
         withContext(Dispatchers.Main) {
             runCatching {
                 val configurable = source as? ConfigurableSource ?: return@runCatching emptyList()
-                val prefManager = PreferenceManager(context).apply {
+                val themedCtx = ContextThemeWrapper(context, android.R.style.Theme_Material)
+                val prefManager = PreferenceManager(themedCtx).apply {
                     sharedPreferencesName = "source_${source.id}"
                 }
-                val screen = prefManager.createPreferenceScreen(context)
+                val screen = prefManager.createPreferenceScreen(themedCtx)
                 configurable.setupPreferenceScreen(screen)
                 val items = mutableListOf<ExtractedPreferenceItem>()
                 collectPreferences(screen, prefManager.sharedPreferences, items)
                 items
+            }.onFailure { err ->
+                TubiacLogcat.w("ExtensionExtras", "Preference extraction failed for ${source.name}: ${err.message}", err)
             }
         }
 
@@ -220,8 +225,12 @@ class ExtensionExtrasExtractor @Inject constructor(
                 "#comments li.comment",
                 ".comment-list .comment",
                 ".comments-area .comment",
+                "article.comment",
+                "[data-comment-id]",
                 "[class*='comment-item']",
-                "[id*='comment-'] ",
+                "[class*='comment-body']",
+                "[id*='comment-']",
+                ".chapter-notes, #translator-notes",
             )
             for (sel in selectors) {
                 val nodes = doc.select(sel)

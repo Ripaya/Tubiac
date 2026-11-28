@@ -107,6 +107,8 @@ import tube.maniac.core.database.entity.HistoryEntity
 import tube.maniac.core.database.entity.toDomain
 import tube.maniac.core.database.entity.toEntity
 import tube.maniac.core.designsystem.theme.tabular
+import tube.maniac.core.diagnostics.AutoIssueReporter
+import tube.maniac.core.diagnostics.unwrapRoot
 import tube.maniac.core.extension.loader.SourceManager
 import tube.maniac.core.model.Chapter
 import tube.maniac.core.model.ColorFilterConfig
@@ -192,11 +194,13 @@ class ReaderViewModel @Inject constructor(
                         }
                         val rawPages = source.getPageList(sChapter)
                         val httpSource = source as? HttpSource
-                        coroutineScope {
+                        var firstPageError: Throwable? = null
+                        val resolvedPages = coroutineScope {
                             rawPages.mapIndexed { idx, p ->
                                 async {
                                     if (p.imageUrl.isNullOrBlank() && httpSource != null && p.url.isNotBlank()) {
                                         runCatching { p.imageUrl = httpSource.getImageUrl(p) }
+                                            .onFailure { if (firstPageError == null) firstPageError = it }
                                     }
                                     val resolvedUrl = p.imageUrl?.takeIf { it.isNotBlank() } ?: p.url
                                     val reqHeaders = httpSource?.let { hs ->
@@ -213,12 +217,28 @@ class ReaderViewModel @Inject constructor(
                                 }
                             }.awaitAll()
                         }
+                        if (resolvedPages.all { it.imageUrl.isBlank() } && firstPageError != null) {
+                            throw requireNotNull(firstPageError)
+                        }
+                        if (firstPageError != null && rawPages.any { it.imageUrl.isNullOrBlank() }) {
+                            loadError = firstPageError?.unwrapRoot()?.message
+                        }
+                        resolvedPages
                     } else {
                         loadError = "Source is not installed for this series."
                         emptyList()
                     }
                 }.onFailure { err ->
-                    loadError = err.message ?: "Failed to load chapter pages"
+                    val root = err.unwrapRoot()
+                    if (root !is kotlinx.coroutines.CancellationException) {
+                        AutoIssueReporter.reportRuntimeBug(
+                            category = "reader-pages",
+                            title = "[Reader] Failed loading pages via ${source?.name ?: "source"}",
+                            detail = "series=${series.title}, chapter=${chapter.name}",
+                            throwable = root,
+                        )
+                    }
+                    loadError = root.message ?: "Failed to load chapter pages"
                 }.getOrDefault(emptyList())
             }
 
@@ -235,7 +255,9 @@ class ReaderViewModel @Inject constructor(
                 errorMessage = loadError,
             )
 
-            triggerDownloadAhead(series, chapters, chapter, settings.downloadAheadCount)
+            if (!settings.incognitoMode) {
+                triggerDownloadAhead(series, chapters, chapter, settings.downloadAheadCount)
+            }
         }
     }
 

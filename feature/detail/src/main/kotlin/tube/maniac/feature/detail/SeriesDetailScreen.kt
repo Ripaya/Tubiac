@@ -309,8 +309,11 @@ class SeriesDetailViewModel @Inject constructor(
                     url = entity.url
                     title = entity.title
                 }
-                val details = runCatching { source.getMangaDetails(sManga) }.getOrNull()
+                val httpSource = source as? HttpSource
+                val detailsResult = runCatching { source.getMangaDetails(sManga) }
+                val details = detailsResult.getOrNull()
                 if (details != null) {
+                    sManga.copyFrom(details)
                     seriesDao.update(
                         entity.copy(
                             author = details.author ?: entity.author,
@@ -329,11 +332,15 @@ class SeriesDetailViewModel @Inject constructor(
                         ),
                     )
                 }
-                val remoteChapters = source.getChapterList(sManga)
+                val chaptersResult = runCatching { source.getChapterList(sManga) }
+                val remoteChapters = chaptersResult.getOrElse { chErr ->
+                    throw (detailsResult.exceptionOrNull() ?: chErr)
+                }
                 val existingUrls = chapterDao.getBySeries(seriesId).map { it.url }.toSet()
                 val newEntities = remoteChapters
                     .filterNot { it.url in existingUrls }
                     .mapIndexed { idx, ch ->
+                        httpSource?.let { hs -> runCatching { hs.prepareNewChapter(ch, sManga) } }
                         ChapterEntity(
                             seriesId = seriesId,
                             url = ch.url,

@@ -3,6 +3,8 @@ package tube.maniac.feature.browse
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,25 +16,39 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TriStateCheckbox
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -81,6 +98,9 @@ data class SourceBrowseUiState(
     val sourceName: String = "Source",
     val supportsLatest: Boolean = false,
     val baseUrl: String? = null,
+    val sourceHeaders: Map<String, String> = emptyMap(),
+    val filters: FilterList = FilterList(),
+    val filterRevision: Int = 0,
     val activeTab: SourceFeedTab = SourceFeedTab.POPULAR,
     val query: String = "",
     val items: List<SManga> = emptyList(),
@@ -104,14 +124,34 @@ class SourceBrowseViewModel @Inject constructor(
         if (_uiState.value.sourceId == sourceId && _uiState.value.items.isNotEmpty()) return
         val source = sourceManager.getSource(sourceId)
         val catalogue = source as? CatalogueSource
-        val httpBase = (source as? HttpSource)?.baseUrl
+        val httpSource = source as? HttpSource
+        val headerMap = buildMap<String, String> {
+            httpSource?.let { hs ->
+                runCatching { hs.headers }.getOrNull()?.let { h ->
+                    for (i in 0 until h.size) put(h.name(i), h.value(i))
+                }
+            }
+        }
+        val initialFilters = runCatching { catalogue?.getFilterList() ?: FilterList() }.getOrDefault(FilterList())
         _uiState.value = SourceBrowseUiState(
             sourceId = sourceId,
             sourceName = source?.name ?: "Unknown Source",
             supportsLatest = catalogue?.supportsLatest == true,
-            baseUrl = httpBase,
+            baseUrl = httpSource?.baseUrl,
+            sourceHeaders = headerMap,
+            filters = initialFilters,
         )
         loadPage(reset = true)
+    }
+
+    fun notifyFilterMutated() {
+        _uiState.value = _uiState.value.copy(filterRevision = _uiState.value.filterRevision + 1)
+    }
+
+    fun resetFilters() {
+        val catalogue = sourceManager.getSource(_uiState.value.sourceId) as? CatalogueSource
+        val fresh = runCatching { catalogue?.getFilterList() ?: FilterList() }.getOrDefault(FilterList())
+        _uiState.value = _uiState.value.copy(filters = fresh, filterRevision = _uiState.value.filterRevision + 1)
     }
 
     fun selectTab(tab: SourceFeedTab) {
@@ -149,7 +189,7 @@ class SourceBrowseViewModel @Inject constructor(
                     when (current.activeTab) {
                         SourceFeedTab.POPULAR -> source.getPopularManga(targetPage)
                         SourceFeedTab.LATEST -> source.getLatestUpdates(targetPage)
-                        SourceFeedTab.SEARCH -> source.getSearchManga(targetPage, current.query.trim(), FilterList())
+                        SourceFeedTab.SEARCH -> source.getSearchManga(targetPage, current.query.trim(), current.filters)
                     }
                 }
             }.onSuccess { result ->
@@ -228,6 +268,7 @@ fun SourceBrowseScreen(
 ) {
     LaunchedEffect(sourceId) { viewModel.initSource(sourceId) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showFilterSheet by remember { mutableStateOf(false) }
     val tabs = if (state.supportsLatest) {
         SourceFeedTab.entries
     } else {
@@ -243,6 +284,11 @@ fun SourceBrowseScreen(
                     title = state.sourceName,
                     onBack = onBack,
                     actions = {
+                        if (state.filters.isNotEmpty()) {
+                            IconButton(onClick = { showFilterSheet = true }) {
+                                Icon(Icons.Rounded.FilterList, contentDescription = "Source Filters")
+                            }
+                        }
                         state.baseUrl?.let { baseUrl ->
                             IconButton(onClick = { onOpenWebView(baseUrl) }) {
                                 Icon(Icons.Rounded.Public, contentDescription = "Open source in WebView")
@@ -339,6 +385,7 @@ fun SourceBrowseScreen(
                                 SeriesCoverCard(
                                     title = manga.title,
                                     coverUrl = manga.thumbnail_url,
+                                    coverHeaders = state.sourceHeaders,
                                     onClick = { viewModel.openManga(manga, onOpenSeriesDetail) },
                                 )
                             }
@@ -365,6 +412,178 @@ fun SourceBrowseScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showFilterSheet && state.filters.isNotEmpty()) {
+        ModalBottomSheet(onDismissRequest = { showFilterSheet = false }) {
+            val rev = state.filterRevision
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Source Filters", style = MaterialTheme.typography.titleLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { viewModel.resetFilters() }) { Text("Reset") }
+                        FilledTonalButton(
+                            onClick = {
+                                showFilterSheet = false
+                                viewModel.executeSearch()
+                            },
+                            shape = MaterialTheme.shapes.small,
+                        ) { Text("Apply") }
+                    }
+                }
+                HorizontalDivider()
+                @Suppress("UNUSED_VARIABLE")
+                val unusedRev = rev
+                state.filters.forEach { filter ->
+                    SourceFilterControl(filter = filter, onMutated = viewModel::notifyFilterMutated)
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SourceFilterControl(
+    filter: Filter<*>,
+    onMutated: () -> Unit,
+) {
+    when (filter) {
+        is Filter.Header -> Text(filter.name, style = MaterialTheme.typography.titleSmall)
+        is Filter.Separator -> HorizontalDivider()
+        is Filter.Text -> {
+            var draft by remember(filter, filter.state) { mutableStateOf(filter.state) }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = {
+                    draft = it
+                    filter.state = it
+                    onMutated()
+                },
+                label = { Text(filter.name) },
+                singleLine = true,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        is Filter.CheckBox -> {
+            var checked by remember(filter, filter.state) { mutableStateOf(filter.state) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(filter.name, style = MaterialTheme.typography.bodyMedium)
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = {
+                        checked = it
+                        filter.state = it
+                        onMutated()
+                    },
+                )
+            }
+        }
+        is Filter.TriState -> {
+            var tri by remember(filter, filter.state) { mutableIntStateOf(filter.state) }
+            val toggleState = when (tri) {
+                Filter.TriState.STATE_INCLUDE -> ToggleableState.On
+                Filter.TriState.STATE_EXCLUDE -> ToggleableState.Indeterminate
+                else -> ToggleableState.Off
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(filter.name, style = MaterialTheme.typography.bodyMedium)
+                TriStateCheckbox(
+                    state = toggleState,
+                    onClick = {
+                        tri = when (tri) {
+                            Filter.TriState.STATE_IGNORE -> Filter.TriState.STATE_INCLUDE
+                            Filter.TriState.STATE_INCLUDE -> Filter.TriState.STATE_EXCLUDE
+                            else -> Filter.TriState.STATE_IGNORE
+                        }
+                        filter.state = tri
+                        onMutated()
+                    },
+                )
+            }
+        }
+        is Filter.Select<*> -> {
+            var selectedIdx by remember(filter, filter.state) { mutableIntStateOf(filter.state) }
+            Text(filter.name, style = MaterialTheme.typography.labelLarge)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                filter.values.forEachIndexed { idx, value ->
+                    FilterChip(
+                        selected = selectedIdx == idx,
+                        onClick = {
+                            selectedIdx = idx
+                            filter.state = idx
+                            onMutated()
+                        },
+                        label = { Text(value?.toString().orEmpty()) },
+                        shape = MaterialTheme.shapes.small,
+                    )
+                }
+            }
+        }
+        is Filter.Sort -> {
+            var selection by remember(filter, filter.state) { mutableStateOf(filter.state) }
+            Text(filter.name, style = MaterialTheme.typography.labelLarge)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                filter.values.forEachIndexed { idx, value ->
+                    val isSelected = selection?.index == idx
+                    val arrow = if (isSelected) (if (selection?.ascending == true) " ↑" else " ↓") else ""
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            val next = if (isSelected) {
+                                Filter.Sort.Selection(idx, ascending = !(selection?.ascending ?: true))
+                            } else {
+                                Filter.Sort.Selection(idx, ascending = false)
+                            }
+                            selection = next
+                            filter.state = next
+                            onMutated()
+                        },
+                        label = { Text("$value$arrow") },
+                        shape = MaterialTheme.shapes.small,
+                    )
+                }
+            }
+        }
+        is Filter.Group<*> -> {
+            Text(filter.name, style = MaterialTheme.typography.titleSmall)
+            Column(
+                modifier = Modifier.padding(start = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                filter.state.forEach { nested ->
+                    if (nested is Filter<*>) {
+                        SourceFilterControl(filter = nested, onMutated = onMutated)
                     }
                 }
             }

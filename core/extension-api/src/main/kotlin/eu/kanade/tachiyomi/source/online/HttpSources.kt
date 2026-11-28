@@ -54,11 +54,16 @@ abstract class HttpSource : CatalogueSource {
     protected open fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", ExtensionNetworkBridge.userAgentProvider())
 
-    open fun getMangaUrl(manga: SManga): String =
-        if (manga.url.startsWith("http://") || manga.url.startsWith("https://")) manga.url else baseUrl + manga.url
+    open fun getMangaUrl(manga: SManga): String = resolveRelativeUrl(manga.url)
 
-    open fun getChapterUrl(chapter: SChapter): String =
-        if (chapter.url.startsWith("http://") || chapter.url.startsWith("https://")) chapter.url else baseUrl + chapter.url
+    open fun getChapterUrl(chapter: SChapter): String = resolveRelativeUrl(chapter.url)
+
+    private fun resolveRelativeUrl(pathOrUrl: String): String = when {
+        pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://") -> pathOrUrl
+        pathOrUrl.isBlank() -> baseUrl
+        pathOrUrl.startsWith("/") -> baseUrl.trimEnd('/') + pathOrUrl
+        else -> "${baseUrl.trimEnd('/')}/$pathOrUrl"
+    }
 
     protected abstract fun popularMangaRequest(page: Int): Request
     protected abstract fun popularMangaParse(response: Response): MangasPage
@@ -69,20 +74,24 @@ abstract class HttpSource : CatalogueSource {
     protected abstract fun latestUpdatesRequest(page: Int): Request
     protected abstract fun latestUpdatesParse(response: Response): MangasPage
 
-    protected open fun mangaDetailsRequest(manga: SManga): Request = GET(baseUrl + manga.url, headers)
+    protected open fun mangaDetailsRequest(manga: SManga): Request = GET(getMangaUrl(manga), headers)
     protected abstract fun mangaDetailsParse(response: Response): SManga
 
-    protected open fun chapterListRequest(manga: SManga): Request = GET(baseUrl + manga.url, headers)
+    protected open fun chapterListRequest(manga: SManga): Request = GET(getMangaUrl(manga), headers)
     protected abstract fun chapterListParse(response: Response): List<SChapter>
 
-    protected open fun pageListRequest(chapter: SChapter): Request = GET(baseUrl + chapter.url, headers)
+    protected open fun pageListRequest(chapter: SChapter): Request = GET(getChapterUrl(chapter), headers)
     protected abstract fun pageListParse(response: Response): List<Page>
 
-    protected open fun imageUrlRequest(page: Page): Request = GET(page.url, headers)
+    protected open fun imageUrlRequest(page: Page): Request = GET(resolveRelativeUrl(page.url), headers)
     protected abstract fun imageUrlParse(response: Response): String
 
-    open fun imageRequest(page: Page): Request =
-        GET(requireNotNull(page.imageUrl ?: page.url.takeIf { it.isNotBlank() }), headers)
+    open fun imageRequest(page: Page): Request {
+        val target = page.imageUrl?.takeIf { it.isNotBlank() }
+            ?: page.url.takeIf { it.isNotBlank() }
+            ?: baseUrl
+        return GET(resolveRelativeUrl(target), headers)
+    }
 
     open fun fetchImageUrl(page: Page): Observable<String> = Observable.fromCallable {
         if (!page.imageUrl.isNullOrBlank()) {

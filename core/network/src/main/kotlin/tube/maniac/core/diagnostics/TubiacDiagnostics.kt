@@ -328,7 +328,13 @@ object AutoIssueReporter {
         runCatching {
             val tmp = File(pendingDir, "$fingerprint.json.tmp")
             tmp.writeText(json.encodeToString(report))
-            tmp.renameTo(target)
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+        }.onFailure { err ->
+            TubiacLogcat.w("AutoReporter", "Could not persist issue report $fingerprint: ${err.message}")
+            return false
         }
         refreshStateSnapshot("Queued issue [$fingerprint] for upload")
         return true
