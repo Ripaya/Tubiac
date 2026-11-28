@@ -126,6 +126,9 @@ class SourceBrowseViewModel @Inject constructor(
         val catalogue = source as? CatalogueSource
         val httpSource = source as? HttpSource
         val headerMap = buildMap<String, String> {
+            if (sourceId > 0L) {
+                put("X-Tubiac-Source-Id", sourceId.toString())
+            }
             httpSource?.let { hs ->
                 runCatching { hs.headers }.getOrNull()?.let { h ->
                     for (i in 0 until h.size) put(h.name(i), h.value(i))

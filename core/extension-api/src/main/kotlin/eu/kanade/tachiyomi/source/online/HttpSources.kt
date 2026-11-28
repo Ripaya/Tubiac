@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.source.online
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
+import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -24,6 +25,7 @@ object ExtensionNetworkBridge {
     @Volatile
     var sharedClient: OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(UncaughtExceptionInterceptor())
+        .addInterceptor(UserAgentInterceptor { userAgentProvider() })
         .build()
 
     @Volatile

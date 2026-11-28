@@ -109,7 +109,8 @@ class DownloadWorker @AssistedInject constructor(
                                 val url = page.imageUrl ?: page.url
                                 val pageRequest = httpSource?.let { runCatching { it.imageRequest(page) }.getOrNull() }
                                     ?: Request.Builder().url(url).get().build()
-                                val finalFile = okHttpClient.newCall(pageRequest).execute().use { resp ->
+                                val callClient = runCatching { httpSource?.client }.getOrNull() ?: okHttpClient
+                                val finalFile = callClient.newCall(pageRequest).execute().use { resp ->
                                     if (!resp.isSuccessful) error("HTTP ${resp.code} fetching page ${idx + 1}")
                                     val ext = extensionFromMime(resp.header("Content-Type"), url)
                                     val targetFile = File(outputRoot, String.format(java.util.Locale.US, "%04d_%s.%s", idx, sha256Short(url), ext))

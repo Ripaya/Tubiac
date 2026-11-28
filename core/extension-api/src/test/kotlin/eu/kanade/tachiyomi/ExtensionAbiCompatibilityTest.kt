@@ -70,6 +70,7 @@ class ExtensionAbiCompatibilityTest {
         assertEquals("ok", lazySample)
         assertTrue(SManga.ContentRating.ADULT.name == "ADULT")
         assertTrue(SManga.ReadingMode.LONG_STRIP.name == "LONG_STRIP")
+        assertTrue(HttpSource::class.java.declaredFields.any { it.name == "headers\$delegate" })
 
         extendableClasses.forEach { clazz ->
             assertFalse(

@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -43,7 +44,7 @@ object NetworkModule {
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(config))
             .addInterceptor(
-                CloudflareDetectorInterceptor(
+                CloudflareInterceptor(
                     context = context,
                     cookieJar = cookieJar,
                     config = config,

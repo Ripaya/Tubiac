@@ -119,6 +119,7 @@ private class DelegateLastPathClassLoader(
             "org.jsoup.",
             "androidx.",
             "app.cash.quickjs.",
+            "com.squareup.zstd.",
             "tube.maniac.",
         )
     }

@@ -207,6 +207,9 @@ class ReaderViewModel @Inject constructor(
                                         runCatching { hs.imageRequest(p).headers }.getOrNull()
                                     }
                                     val headerMap = buildMap<String, String> {
+                                        if (series.sourceId > 0L) {
+                                            put("X-Tubiac-Source-Id", series.sourceId.toString())
+                                        }
                                         reqHeaders?.let { h ->
                                             for (i in 0 until h.size) {
                                                 put(h.name(i), h.value(i))

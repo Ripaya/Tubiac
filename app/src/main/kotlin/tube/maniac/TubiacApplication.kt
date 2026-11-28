@@ -19,7 +19,10 @@ import dagger.hilt.android.HiltAndroidApp
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
+import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.serialization.json.Json
+import okhttp3.CacheControl
+import okhttp3.Call
 import okhttp3.CookieJar
 import okhttp3.OkHttpClient
 import tube.maniac.core.diagnostics.AutoIssueReporter
@@ -122,7 +125,23 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
             }
             .components {
                 add(ZipEntryFetcher.Factory(this@TubiacApplication))
-                add(OkHttpNetworkFetcherFactory(callFactory = { okHttpClient }))
+                val sourceAwareCallFactory = Call.Factory { req ->
+                    val sourceIdHeader = req.header("X-Tubiac-Source-Id")?.toLongOrNull()
+                    val cleanReq = if (sourceIdHeader != null) {
+                        val b = req.newBuilder().removeHeader("X-Tubiac-Source-Id")
+                        if (req.header("Cache-Control").isNullOrBlank()) {
+                            b.cacheControl(CacheControl.Builder().noStore().build())
+                        }
+                        b.build()
+                    } else {
+                        req
+                    }
+                    val sourceClient = sourceIdHeader?.let { sid ->
+                        (sourceManager.getSource(sid) as? HttpSource)?.client
+                    }
+                    (sourceClient ?: okHttpClient).newCall(cleanReq)
+                }
+                add(OkHttpNetworkFetcherFactory(callFactory = { sourceAwareCallFactory }))
             }
             .build()
 }
