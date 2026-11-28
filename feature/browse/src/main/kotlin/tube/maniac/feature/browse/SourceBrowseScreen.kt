@@ -401,7 +401,7 @@ fun SourceBrowseScreen(
                             items(state.items, key = { it.url }) { manga ->
                                 SeriesCoverCard(
                                     title = manga.title,
-                                    coverUrl = normalizeCoverUrl(manga.thumbnail_url, current.baseUrl),
+                                    coverUrl = normalizeCoverUrl(manga.thumbnail_url, state.baseUrl),
                                     coverHeaders = state.sourceHeaders,
                                     onClick = { viewModel.openManga(manga, onOpenSeriesDetail) },
                                 )
