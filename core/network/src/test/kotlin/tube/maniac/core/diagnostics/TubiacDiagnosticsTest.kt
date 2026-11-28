@@ -28,13 +28,9 @@ class TubiacDiagnosticsTest {
     @Test
     fun `AutoIssueReporter respects opt-out toggle and deduplicates fingerprints`() {
         val tempDir = Files.createTempDirectory("tubiac-diag-test").toFile()
-        val mockCtx = object : android.content.ContextWrapper(null) {
-            override fun getFilesDir() = tempDir
-            override fun getPackageName() = "tube.maniac.test"
-        }
-
-        AutoIssueReporter.initialize(
-            context = mockCtx,
+        AutoIssueReporter.initializeForDirectory(
+            filesDir = tempDir,
+            packageName = "tube.maniac.test",
             versionName = "0.1.5-alpha",
             versionCode = 6L,
         )

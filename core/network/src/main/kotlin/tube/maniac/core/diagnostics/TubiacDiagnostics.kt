@@ -80,7 +80,11 @@ object TubiacLogcat {
     private var logFile: File? = null
 
     fun init(context: Context) {
-        val dir = File(context.filesDir, "diagnostics").apply { mkdirs() }
+        initForDirectory(context.filesDir)
+    }
+
+    fun initForDirectory(filesDir: File) {
+        val dir = File(filesDir, "diagnostics").apply { mkdirs() }
         logFile = File(dir, "tubiac.log")
     }
 
@@ -91,7 +95,7 @@ object TubiacLogcat {
 
     fun record(level: String, tag: String, message: String, throwable: Throwable? = null) {
         val sanitizedMsg = redactSensitive(message)
-        val stack = throwable?.let { redactSensitive(Log.getStackTraceString(it)).take(2_500) }.orEmpty()
+        val stack = throwable?.let { redactSensitive(it.stackTraceToString()).take(2_500) }.orEmpty()
         val combined = if (stack.isNotBlank()) "$sanitizedMsg\n$stack" else sanitizedMsg
 
         runCatching {
@@ -207,12 +211,32 @@ object AutoIssueReporter {
         defaultGitHubToken: String = "",
         onPendingQueued: (() -> Unit)? = null,
     ) {
-        TubiacLogcat.init(context)
-        val root = File(context.filesDir, "diagnostics").apply { mkdirs() }
+        initializeForDirectory(
+            filesDir = context.filesDir,
+            packageName = context.packageName,
+            versionName = versionName,
+            versionCode = versionCode,
+            defaultRelayUrl = defaultRelayUrl,
+            defaultGitHubToken = defaultGitHubToken,
+            onPendingQueued = onPendingQueued,
+        )
+    }
+
+    fun initializeForDirectory(
+        filesDir: File,
+        packageName: String = "tube.maniac",
+        versionName: String,
+        versionCode: Long,
+        defaultRelayUrl: String = "",
+        defaultGitHubToken: String = "",
+        onPendingQueued: (() -> Unit)? = null,
+    ) {
+        TubiacLogcat.initForDirectory(filesDir)
+        val root = File(filesDir, "diagnostics").apply { mkdirs() }
         File(root, "pending").mkdirs()
         diagnosticsDir = root
         appVersionLabel = "v$versionName (Build $versionCode)"
-        packageNameLabel = context.packageName
+        packageNameLabel = packageName
         if (defaultRelayUrl.isNotBlank()) relayUrlRef.set(defaultRelayUrl.trim())
         if (defaultGitHubToken.isNotBlank()) githubTokenRef.set(defaultGitHubToken.trim())
         onQueueCallback = onPendingQueued
@@ -273,7 +297,7 @@ object AutoIssueReporter {
     ): Boolean {
         val dir = diagnosticsDir ?: return false
         val rootCause = throwable?.unwrapRoot()
-        val stack = rootCause?.let { TubiacLogcat.redactSensitive(Log.getStackTraceString(it)).take(4_500) }.orEmpty()
+        val stack = rootCause?.let { TubiacLogcat.redactSensitive(it.stackTraceToString()).take(4_500) }.orEmpty()
         val topFrame = rootCause?.stackTrace?.firstOrNull()?.let { "${it.className}:${it.lineNumber}" }.orEmpty()
         val fpInput = "$category|${rootCause?.javaClass?.name ?: title}|$topFrame"
         val fingerprint = sha256Short(fpInput)
