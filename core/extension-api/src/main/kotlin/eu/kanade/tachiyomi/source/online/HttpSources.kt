@@ -54,9 +54,37 @@ abstract class HttpSource : CatalogueSource {
     protected open fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", ExtensionNetworkBridge.userAgentProvider())
 
+    open fun getHomeUrl(): String = baseUrl
+
+    override val language: String
+        get() = when (lang) {
+            "all" -> "mul"
+            "other" -> "und"
+            else -> lang
+        }
+
     open fun getMangaUrl(manga: SManga): String = resolveRelativeUrl(manga.url)
 
     open fun getChapterUrl(chapter: SChapter): String = resolveRelativeUrl(chapter.url)
+
+    fun SChapter.setUrlWithoutDomain(url: String) {
+        this.url = stripSchemeAndHost(url)
+    }
+
+    fun SManga.setUrlWithoutDomain(url: String) {
+        this.url = stripSchemeAndHost(url)
+    }
+
+    private fun stripSchemeAndHost(orig: String): String = try {
+        val parsed = java.net.URI(orig)
+        buildString {
+            append(parsed.rawPath.orEmpty().ifEmpty { "/" })
+            if (!parsed.rawQuery.isNullOrEmpty()) append("?${parsed.rawQuery}")
+            if (!parsed.rawFragment.isNullOrEmpty()) append("#${parsed.rawFragment}")
+        }
+    } catch (_: Exception) {
+        orig
+    }
 
     private fun resolveRelativeUrl(pathOrUrl: String): String = when {
         pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://") -> pathOrUrl
@@ -101,7 +129,7 @@ abstract class HttpSource : CatalogueSource {
         }
     }
 
-    suspend fun getImageUrl(page: Page): String = fetchImageUrl(page).toBlocking().first()
+    open suspend fun getImageUrl(page: Page): String = fetchImageUrl(page).toBlocking().first()
 
     override fun fetchPopularManga(page: Int): Observable<MangasPage> = Observable.fromCallable {
         client.newCall(popularMangaRequest(page)).execute().use(::popularMangaParse)

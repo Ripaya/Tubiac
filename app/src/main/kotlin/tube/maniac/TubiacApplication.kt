@@ -16,6 +16,7 @@ import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import dagger.hilt.android.HiltAndroidApp
+import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.online.ExtensionNetworkBridge
 import kotlinx.serialization.json.Json
@@ -79,6 +80,7 @@ class TubiacApplication : Application(), Configuration.Provider, SingletonImageL
         registerInjekt<OkHttpClient>(okHttpClient)
         registerInjekt<CookieJar>(okHttpClient.cookieJar)
         registerInjekt(NetworkHelper())
+        registerInjekt(JavaScriptEngine(this))
         registerInjekt(json)
 
         ExtensionInstallBridge.onInstallSuccess = { sourceManager.reloadExtensions() }

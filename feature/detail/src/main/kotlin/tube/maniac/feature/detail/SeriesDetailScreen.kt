@@ -310,8 +310,23 @@ class SeriesDetailViewModel @Inject constructor(
                     title = entity.title
                 }
                 val httpSource = source as? HttpSource
-                val detailsResult = runCatching { source.getMangaDetails(sManga) }
-                val details = detailsResult.getOrNull()
+                val existingEntities = chapterDao.getBySeries(seriesId)
+                val existingSChapters = existingEntities.map { ch ->
+                    SChapter.create().apply {
+                        url = ch.url
+                        name = ch.name
+                        chapter_number = ch.chapterNumber
+                        scanlator = ch.scanlator
+                        date_upload = ch.dateUpload
+                    }
+                }
+                val update = source.getMangaUpdate(
+                    manga = sManga,
+                    chapters = existingSChapters,
+                    fetchDetails = true,
+                    fetchChapters = true,
+                )
+                val details = runCatching { update.manga() }.getOrNull()
                 if (details != null) {
                     sManga.copyFrom(details)
                     seriesDao.update(
@@ -320,6 +335,7 @@ class SeriesDetailViewModel @Inject constructor(
                             artist = details.artist ?: entity.artist,
                             description = details.description ?: entity.description,
                             coverUrl = details.thumbnail_url ?: entity.coverUrl,
+                            bannerUrl = details.banner ?: entity.bannerUrl,
                             genres = details.getGenres() ?: entity.genres,
                             publicationStatus = when (details.status) {
                                 SManga.ONGOING -> PublicationStatus.ONGOING
@@ -332,11 +348,8 @@ class SeriesDetailViewModel @Inject constructor(
                         ),
                     )
                 }
-                val chaptersResult = runCatching { source.getChapterList(sManga) }
-                val remoteChapters = chaptersResult.getOrElse { chErr ->
-                    throw (detailsResult.exceptionOrNull() ?: chErr)
-                }
-                val existingUrls = chapterDao.getBySeries(seriesId).map { it.url }.toSet()
+                val remoteChapters = update.chapters()
+                val existingUrls = existingEntities.map { it.url }.toSet()
                 val newEntities = remoteChapters
                     .filterNot { it.url in existingUrls }
                     .mapIndexed { idx, ch ->

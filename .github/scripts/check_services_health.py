@@ -21,9 +21,16 @@ SKIP_PREFIXES = (
     "https://www.w3.org",
     "https://example.org",
     "http://example.org",
+    "https://cdn.example.org",
+    "https://your-relay.workers.dev",
+    "https://cdn/",
     "https://...",
     "http://...",
     "https://github.com/Ripaya/Tubiac",
+    "https://github.com/mihonapp",
+    "https://github.com/keiyoushi",
+    "https://api.github.com/repos/",
+    "https://api.github.com/search/",
 )
 
 CORE_PROBES = [
@@ -162,6 +169,9 @@ def discover_repo_urls(root: Path) -> list[str]:
         else:
             continue
         for f in files:
+            norm = f.as_posix()
+            if "/src/test/" in norm or "/src/androidTest/" in norm:
+                continue
             text = f.read_text(encoding="utf-8", errors="ignore")
             for match in URL_RE.findall(text):
                 cleaned = match.rstrip(".,;:")

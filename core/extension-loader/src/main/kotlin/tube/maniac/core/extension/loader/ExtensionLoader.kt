@@ -6,7 +6,9 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dalvik.system.DelegateLastClassLoader
 import dalvik.system.PathClassLoader
+import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.Source
@@ -23,6 +25,9 @@ import tube.maniac.core.model.ExtensionInstallState
 import tube.maniac.core.network.NetworkRuntimeConfig
 import uy.kohesive.injekt.registerInjekt
 import java.io.File
+import java.net.URL
+import java.util.Collections
+import java.util.Enumeration
 import java.util.zip.ZipInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,40 +39,72 @@ data class LoadedExtension(
 )
 
 /**
- * Child-first ClassLoader modeled after Mihon's extension isolation:
- * delegates shared host API, Android, Kotlin, and networking classes to the parent
- * so runtime interface/instance checks (`is Source`, `OkHttpClient`, `Injekt`) share identical
- * Class identities, while loading bundled helper/multisrc/extension classes from the extension APK first.
+ * Mihon-aligned ClassLoader factory: uses Android 17+ native DelegateLastClassLoader where supported,
+ * and DelegateLastPathClassLoader (boot -> host ABI/stdlib -> extension dex -> parent fallback) on API 26-36.
  */
-internal class ChildFirstPathClassLoader(
+internal fun createExtensionClassLoader(
+    dexPath: String,
+    librarySearchPath: String?,
+    parent: ClassLoader,
+): ClassLoader = if (Build.VERSION.SDK_INT >= 37) {
+    DelegateLastClassLoader(dexPath, librarySearchPath, parent)
+} else {
+    DelegateLastPathClassLoader(dexPath, librarySearchPath, parent)
+}
+
+private class DelegateLastPathClassLoader(
     dexPath: String,
     librarySearchPath: String?,
     parent: ClassLoader,
 ) : PathClassLoader(dexPath, librarySearchPath, parent) {
 
-    override fun loadClass(name: String, resolve: Boolean): Class<*> {
+    private val bootClassLoader: ClassLoader? = Any::class.java.classLoader
+
+    override fun loadClass(name: String?, resolve: Boolean): Class<*> {
         findLoadedClass(name)?.let { return it }
-        if (shouldDelegateToParent(name)) {
-            return super.loadClass(name, resolve)
+
+        if (bootClassLoader != null) {
+            try {
+                return bootClassLoader.loadClass(name)
+            } catch (_: ClassNotFoundException) {}
         }
+
+        if (name != null && shouldDelegateToHostParent(name)) {
+            return parent.loadClass(name)
+        }
+
+        val childMissing = try {
+            return findClass(name)
+        } catch (e: ClassNotFoundException) {
+            e
+        }
+
         return try {
-            findClass(name).also { if (resolve) resolveClass(it) }
+            parent.loadClass(name)
         } catch (_: ClassNotFoundException) {
-            super.loadClass(name, resolve)
+            throw childMissing
         }
     }
 
-    private fun shouldDelegateToParent(name: String): Boolean =
-        PARENT_FIRST_PREFIXES.any { prefix -> name.startsWith(prefix) }
+    override fun getResource(name: String?): URL? =
+        bootClassLoader?.getResource(name)
+            ?: findResource(name)
+            ?: parent?.getResource(name)
+
+    override fun getResources(name: String?): Enumeration<URL> {
+        val resources = buildList {
+            bootClassLoader?.getResources(name)?.let { addAll(it.toList()) }
+            findResources(name)?.let { addAll(it.toList()) }
+            parent?.getResources(name)?.let { addAll(it.toList()) }
+        }
+        return Collections.enumeration(resources)
+    }
+
+    private fun shouldDelegateToHostParent(name: String): Boolean =
+        HOST_PARENT_PREFIXES.any { prefix -> name.startsWith(prefix) }
 
     companion object {
-        private val PARENT_FIRST_PREFIXES = listOf(
-            "java.",
-            "javax.",
-            "sun.",
-            "dalvik.",
-            "android.",
-            "androidx.",
+        private val HOST_PARENT_PREFIXES = listOf(
             "kotlin.",
             "kotlinx.coroutines.",
             "kotlinx.serialization.",
@@ -80,6 +117,8 @@ internal class ChildFirstPathClassLoader(
             "okhttp3.",
             "okio.",
             "org.jsoup.",
+            "androidx.",
+            "app.cash.quickjs.",
             "tube.maniac.",
         )
     }
@@ -87,8 +126,8 @@ internal class ChildFirstPathClassLoader(
 
 /**
  * Discovers and dynamically loads BOTH:
- * 1. Sandbox-extracted extension APKs under files/extensions/<pkg>.apk (zero OS sideload friction)
- * 2. System-installed Tachiyomi/Mihon extension packages via PackageManager
+ * 1. Private/sandbox extension APKs under files/extensions/<pkg>.apk
+ * 2. Shared system-installed Tachiyomi/Mihon extension packages via PackageManager
  */
 @Singleton
 class ExtensionLoader @Inject constructor(
@@ -98,15 +137,17 @@ class ExtensionLoader @Inject constructor(
     json: Json,
 ) {
     init {
+        val appCtx = context.applicationContext ?: context
         ExtensionNetworkBridge.sharedClient = okHttpClient
         ExtensionNetworkBridge.userAgentProvider = { networkConfig.userAgent.get() }
-        (context.applicationContext as? Application)?.let { app ->
+        (appCtx as? Application)?.let { app ->
             registerInjekt<Application>(app)
         }
-        registerInjekt<Context>(context.applicationContext ?: context)
+        registerInjekt<Context>(appCtx)
         registerInjekt<OkHttpClient>(okHttpClient)
         registerInjekt<CookieJar>(okHttpClient.cookieJar)
         registerInjekt(NetworkHelper())
+        registerInjekt(JavaScriptEngine(appCtx))
         registerInjekt(json)
     }
 
@@ -115,12 +156,19 @@ class ExtensionLoader @Inject constructor(
     private fun nativeLibsDir(pkgName: String): File =
         File(File(context.filesDir, "extensions_native"), pkgName).apply { mkdirs() }
 
+    @Suppress("DEPRECATION")
+    private val packageFlags: Int =
+        PackageManager.GET_CONFIGURATIONS or
+            PackageManager.GET_META_DATA or
+            PackageManager.GET_SIGNATURES or
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else 0)
+
     @Synchronized
     fun loadInstalledExtensions(): List<LoadedExtension> {
         val pm = context.packageManager
         val byPkg = linkedMapOf<String, LoadedExtension>()
 
-        // 1. Load sandbox-extracted APKs stored locally in files/extensions/
+        // 1. Load private sandbox APKs stored locally in files/extensions/
         sandboxExtensionsDir().listFiles { f -> f.isFile && f.extension.equals("apk", ignoreCase = true) }
             ?.forEach { apkFile ->
                 val loaded = loadSandboxApk(pm, apkFile)
@@ -129,14 +177,13 @@ class ExtensionLoader @Inject constructor(
                 }
             }
 
-        // 2. Load system-installed extension APKs (preferring system install if equal/newer versionCode or sandbox errored)
-        val flags = PackageManager.GET_META_DATA or PackageManager.GET_CONFIGURATIONS
+        // 2. Load shared system-installed extension APKs (preferring newer versionCode or working sources)
         val packages: List<PackageInfo> = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(flags.toLong()))
+                pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(packageFlags.toLong()))
             } else {
                 @Suppress("DEPRECATION")
-                pm.getInstalledPackages(flags)
+                pm.getInstalledPackages(packageFlags)
             }
         }.getOrDefault(emptyList())
 
@@ -159,20 +206,19 @@ class ExtensionLoader @Inject constructor(
     }
 
     private fun loadSandboxApk(pm: PackageManager, apkFile: File): LoadedExtension? {
-        runCatching { apkFile.setReadOnly() } // Android 14+ requires non-writable DEX container
-        val flags = PackageManager.GET_META_DATA or PackageManager.GET_CONFIGURATIONS
+        runCatching { apkFile.setReadOnly() }
         val pkgInfo = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(flags.toLong()))
+                pm.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.PackageInfoFlags.of(packageFlags.toLong()))
             } else {
                 @Suppress("DEPRECATION")
-                pm.getPackageArchiveInfo(apkFile.absolutePath, flags)
+                pm.getPackageArchiveInfo(apkFile.absolutePath, packageFlags)
             }
         }.getOrNull()
 
         if (pkgInfo == null) {
             val fallbackPkg = apkFile.nameWithoutExtension
-            val errMsg = "Android PackageManager could not inspect ${apkFile.name}; APK may be incomplete or require System Install."
+            val errMsg = "Android PackageManager could not inspect ${apkFile.name}; APK may be incomplete or require OS Install."
             AutoIssueReporter.reportRuntimeBug("extension-load", "Extension APK parse failed: $fallbackPkg", errMsg)
             return LoadedExtension(
                 info = ExtensionInfo(
@@ -191,8 +237,8 @@ class ExtensionLoader @Inject constructor(
 
         val extractedNativeDir = extractNativeLibs(apkFile, pkgInfo.packageName)
         pkgInfo.applicationInfo?.apply {
-            sourceDir = apkFile.absolutePath
-            publicSourceDir = apkFile.absolutePath
+            if (sourceDir == null) sourceDir = apkFile.absolutePath
+            if (publicSourceDir == null) publicSourceDir = apkFile.absolutePath
             if (extractedNativeDir != null) {
                 nativeLibraryDir = extractedNativeDir.absolutePath
             }
@@ -214,9 +260,7 @@ class ExtensionLoader @Inject constructor(
                     if (!entry.isDirectory && name.startsWith("lib/") && name.endsWith(".so") && !name.contains("..")) {
                         val parts = name.split("/")
                         if (parts.size == 3) {
-                            val abi = parts[1]
-                            val soName = parts[2]
-                            entriesByAbi.getOrPut(abi) { mutableListOf() }.add(soName to zis.readBytes())
+                            entriesByAbi.getOrPut(parts[1]) { mutableListOf() }.add(parts[2] to zis.readBytes())
                         }
                     }
                     entry = zis.nextEntry
@@ -256,14 +300,13 @@ class ExtensionLoader @Inject constructor(
         val classNamesRaw = meta?.getString(META_EXTENSION_CLASS).orEmpty()
 
         val isNsfw = meta?.let {
-            it.getInt(META_EXTENSION_NSFW, 0) == 1 || it.getInt(META_CONTENT_WARNING, 0) >= 3
+            it.getInt(META_EXTENSION_NSFW, 0) == 1 || it.getInt(META_CONTENT_WARNING, 0) >= 1
         } ?: false
 
         val label = meta?.getString(META_TACHIYOMIX_NAME)?.takeIf { it.isNotBlank() }
             ?: runCatching { pm.getApplicationLabel(appInfo).toString() }.getOrDefault(pkgName)
                 .removePrefix("Tachiyomi: ")
                 .removePrefix("Mihon: ")
-        val lang = extractLanguageFromPkg(pkgName)
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             pkgInfo.longVersionCode
         } else {
@@ -280,7 +323,7 @@ class ExtensionLoader @Inject constructor(
                 info = ExtensionInfo(
                     pkgName = pkgName,
                     name = label,
-                    lang = lang,
+                    lang = extractLanguageFromPkg(pkgName),
                     versionName = versionName,
                     versionCode = versionCode,
                     libVersion = libVersion,
@@ -301,7 +344,7 @@ class ExtensionLoader @Inject constructor(
 
         try {
             val parentLoader = context.applicationContext?.classLoader ?: context.classLoader
-            val classLoader = ChildFirstPathClassLoader(apkPath, nativeLibDir, parentLoader)
+            val classLoader = createExtensionClassLoader(apkPath, nativeLibDir, parentLoader)
             classNamesRaw.split(";")
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
@@ -338,6 +381,13 @@ class ExtensionLoader @Inject constructor(
             )
         }
 
+        val sourceLangs = loadedSources.map { it.language.ifBlank { it.lang } }.filter { it.isNotBlank() }.toSet()
+        val lang = when (sourceLangs.size) {
+            0 -> extractLanguageFromPkg(pkgName)
+            1 -> sourceLangs.first()
+            else -> "all"
+        }
+
         val info = ExtensionInfo(
             pkgName = pkgName,
             name = label,
@@ -364,9 +414,11 @@ class ExtensionLoader @Inject constructor(
     }
 
     private fun extractLibVersion(meta: android.os.Bundle?, versionName: String): String? {
-        val explicit = meta?.getString(META_EXTENSION_LIB)?.takeIf { it.isNotBlank() }
+        val explicitStr = meta?.getString(META_EXTENSION_LIB)?.takeIf { it.isNotBlank() }
             ?: meta?.getString(META_TACHIYOMIX_LIB)?.takeIf { it.isNotBlank() }
-        if (explicit != null) return explicit
+        if (explicitStr != null) return explicitStr
+        val explicitFloat = meta?.getFloat(META_TACHIYOMIX_LIB, 0.0f) ?: 0.0f
+        if (explicitFloat != 0.0f) return explicitFloat.toString()
         val segments = versionName.split(".")
         return if (segments.size >= 2) "${segments[0]}.${segments[1]}" else null
     }

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi
 
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.asObservable
@@ -15,6 +16,7 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
@@ -49,11 +51,18 @@ class ExtensionAbiCompatibilityTest {
             HttpSource::class.java,
             ParsedHttpSource::class.java,
             NetworkHelper::class.java,
+            JavaScriptEngine::class.java,
             RateLimitInterceptor::class.java,
             SManga::class.java,
+            SMangaUpdate::class.java,
             SChapter::class.java,
             Page::class.java,
         )
+
+        val lazySample by lazy { "ok" }
+        assertEquals("ok", lazySample)
+        assertTrue(SManga.ContentRating.ADULT.name == "ADULT")
+        assertTrue(SManga.ReadingMode.LONG_STRIP.name == "LONG_STRIP")
 
         extendableClasses.forEach { clazz ->
             assertFalse(

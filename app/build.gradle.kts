@@ -168,6 +168,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.protobuf)
     implementation(libs.rxjava)
+    implementation(libs.quickjs)
     implementation(libs.jsoup)
     implementation(libs.okhttp)
     implementation(libs.okhttp.brotli)

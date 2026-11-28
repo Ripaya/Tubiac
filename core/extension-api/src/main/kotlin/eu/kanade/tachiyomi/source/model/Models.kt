@@ -25,8 +25,33 @@ interface SManga : Serializable {
         get() = null
         set(_) {}
 
+    var altTitles: List<String>
+        get() = emptyList()
+        set(_) {}
+    var banner: String?
+        get() = null
+        set(_) {}
+    var language: String?
+        get() = null
+        set(_) {}
+    var contentRating: ContentRating
+        get() = ContentRating.SAFE
+        set(_) {}
+    var score: Int?
+        get() = null
+        set(_) {}
+    var genres: List<String>
+        get() = genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct().orEmpty()
+        set(value) {
+            genre = value.joinToString(", ")
+        }
+    var readingMode: ReadingMode?
+        get() = null
+        set(_) {}
+
     fun getGenres(): List<String>? =
-        genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct()
+        genres.takeIf { it.isNotEmpty() }
+            ?: genre?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct()
 
     fun setUrlWithoutDomain(url: String) {
         this.url = extractPathAndQuery(url)
@@ -37,10 +62,28 @@ interface SManga : Serializable {
         if (other.artist != null) artist = other.artist
         if (other.description != null) description = other.description
         if (other.genre != null) genre = other.genre
+        if (other.genres.isNotEmpty()) genres = other.genres
         if (other.thumbnail_url != null) thumbnail_url = other.thumbnail_url
+        if (other.banner != null) banner = other.banner
+        if (other.altTitles.isNotEmpty()) altTitles = other.altTitles
+        if (other.score != null) score = other.score
+        if (other.readingMode != null) readingMode = other.readingMode
         if (other.memo != null) memo = other.memo
         status = other.status
+        contentRating = other.contentRating
         if (!initialized) initialized = other.initialized
+    }
+
+    enum class ContentRating {
+        SAFE,
+        SUGGESTIVE,
+        ADULT,
+    }
+
+    enum class ReadingMode {
+        RIGHT_TO_LEFT,
+        LEFT_TO_RIGHT,
+        LONG_STRIP,
     }
 
     companion object {
@@ -59,10 +102,17 @@ interface SManga : Serializable {
 open class SMangaImpl : SManga {
     override lateinit var url: String
     override lateinit var title: String
+    override var altTitles: List<String> = emptyList()
     override var artist: String? = null
     override var author: String? = null
     override var description: String? = null
     override var genre: String? = null
+    override var genres: List<String> = emptyList()
+    override var banner: String? = null
+    override var language: String? = null
+    override var contentRating: SManga.ContentRating = SManga.ContentRating.SAFE
+    override var score: Int? = null
+    override var readingMode: SManga.ReadingMode? = null
     override var status: Int = SManga.UNKNOWN
     override var thumbnail_url: String? = null
     override var update_strategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE
@@ -152,10 +202,17 @@ private fun extractPathAndQuery(orig: String): String {
     }
 }
 
-data class SMangaUpdate(
-    val manga: SManga,
-    val chapters: List<SChapter> = emptyList(),
-)
+/**
+ * Manga details + chapters update payload aligned with tachiyomix 1.6 KeiSource ABI.
+ */
+@Suppress("Unused")
+open class SMangaUpdate(
+    val manga: suspend () -> SManga,
+    val chapters: suspend () -> List<SChapter>,
+) {
+    constructor(manga: SManga, chapters: List<SChapter> = emptyList()) : this({ manga }, { chapters })
+    constructor(manga: SManga, chapters: suspend () -> List<SChapter>) : this({ manga }, chapters)
+}
 
 data class MangasPage(
     val mangas: List<SManga>,

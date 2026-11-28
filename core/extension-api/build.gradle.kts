@@ -35,6 +35,7 @@ dependencies {
     api(libs.okhttp.zstd)
     api(libs.jsoup)
     api(libs.rxjava)
+    api(libs.quickjs)
     api(libs.androidx.preference.ktx)
     api(libs.kotlinx.serialization.json)
     api(libs.kotlinx.serialization.json.okio)

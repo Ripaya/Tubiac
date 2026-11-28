@@ -247,13 +247,28 @@ class LibraryUpdateWorker @AssistedInject constructor(
             }
             val source = sourceManager.getSource(series.sourceId) ?: continue
             runCatching {
-                val remoteChapters = source.getChapterList(
-                    SManga.create().apply {
-                        url = series.url
-                        title = series.title
-                    },
+                val sManga = SManga.create().apply {
+                    url = series.url
+                    title = series.title
+                }
+                val existingEntities = chapterDao.getBySeries(series.id)
+                val existingSChapters = existingEntities.map { ch ->
+                    SChapter.create().apply {
+                        url = ch.url
+                        name = ch.name
+                        chapter_number = ch.chapterNumber
+                        scanlator = ch.scanlator
+                        date_upload = ch.dateUpload
+                    }
+                }
+                val update = source.getMangaUpdate(
+                    manga = sManga,
+                    chapters = existingSChapters,
+                    fetchDetails = false,
+                    fetchChapters = true,
                 )
-                val existingUrls = chapterDao.getBySeries(series.id).map { it.url }.toSet()
+                val remoteChapters = update.chapters()
+                val existingUrls = existingEntities.map { it.url }.toSet()
                 val newEntities = remoteChapters
                     .filterNot { it.url in existingUrls }
                     .mapIndexed { idx, ch ->
